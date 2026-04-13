@@ -18,7 +18,7 @@ async def show_referral(callback: CallbackQuery) -> None:
     user = await db.get_user(callback.from_user.id)
     stats = await db.get_referral_stats(callback.from_user.id)
     bot_me = await callback.bot.get_me()
-    link = f"https://t.me/{bot_me.username}?start=ref_{callback.from_user.id}"
+    link = f"t.me/{bot_me.username}?start=ref_{callback.from_user.id}"
     balance = user["balance"] if user else 0.0
     text = (
         f"Your referral link:\n{link}\n\n"
