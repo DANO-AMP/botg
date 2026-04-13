@@ -60,12 +60,11 @@ async def receive_email(message: Message, state: FSMContext) -> None:
     data = await state.get_data()
     product_id = data["product_id"]
     product = await db.get_product(product_id)
-    if not product:
+    if not product or not product["is_active"]:
         await state.clear()
         await message.answer("Product no longer available.", reply_markup=back_to_main_kb())
         return
     await state.update_data(email=email)
-    await state.clear()
     await message.answer(
         f"Email: {email}\nProduct: {product['name']} — ${product['price_usd']:.2f}\n\n"
         f"Choose payment crypto:",
@@ -83,6 +82,9 @@ async def select_crypto(
 ) -> None:
     if not callback.message:
         await callback.answer("Session expired.", show_alert=True)
+        return
+    if not callback.from_user:
+        await callback.answer("Cannot identify user.", show_alert=True)
         return
     product = await db.get_product(callback_data.product_id)
     if not product:
@@ -110,6 +112,7 @@ async def select_crypto(
 
     fsm_data = await state.get_data()
     email = fsm_data.get("email")
+    await state.clear()
     generated_password = generate_password() if product["type"] == "account" else None
 
     order_id = await db.create_order(
@@ -163,8 +166,14 @@ async def select_crypto(
 
 @router.callback_query(PurchaseCallback.filter(F.action == "check"))
 async def check_payment(callback: CallbackQuery, callback_data: PurchaseCallback) -> None:
+    if not callback.from_user:
+        await callback.answer("Cannot identify user.", show_alert=True)
+        return
     order = await db.get_order(callback_data.id)
     if not order:
+        await callback.answer("Order not found.", show_alert=True)
+        return
+    if order["user_id"] != callback.from_user.id:
         await callback.answer("Order not found.", show_alert=True)
         return
     status_msg = {
