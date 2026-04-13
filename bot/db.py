@@ -167,3 +167,132 @@ async def get_referral_stats(user_id: int, bonus_per_referral: float = 10.0) -> 
         "count": count_row["count"],
         "total_earned": earned_row["earned"] * bonus_per_referral,
     }
+
+
+# --- Categories ---
+
+async def get_active_categories() -> list[dict]:
+    async with _db.execute(
+        "SELECT * FROM categories WHERE is_active = 1 ORDER BY sort_order, name"
+    ) as cur:
+        return _rows(await cur.fetchall())
+
+
+async def get_all_categories() -> list[dict]:
+    async with _db.execute("SELECT * FROM categories ORDER BY sort_order, name") as cur:
+        return _rows(await cur.fetchall())
+
+
+async def get_category(cat_id: int) -> dict | None:
+    async with _db.execute("SELECT * FROM categories WHERE id = ?", (cat_id,)) as cur:
+        return _row(await cur.fetchone())
+
+
+async def add_category(name: str, description: str = "") -> int:
+    cur = await _db.execute(
+        "INSERT INTO categories (name, description) VALUES (?, ?)", (name, description)
+    )
+    await _db.commit()
+    return cur.lastrowid
+
+
+async def update_category_name(cat_id: int, name: str) -> None:
+    await _db.execute("UPDATE categories SET name = ? WHERE id = ?", (name, cat_id))
+    await _db.commit()
+
+
+async def toggle_category(cat_id: int) -> None:
+    await _db.execute(
+        "UPDATE categories SET is_active = 1 - is_active WHERE id = ?", (cat_id,)
+    )
+    await _db.commit()
+
+
+async def delete_category(cat_id: int) -> None:
+    await _db.execute("DELETE FROM categories WHERE id = ?", (cat_id,))
+    await _db.commit()
+
+
+# --- Products ---
+
+async def get_products_by_category(cat_id: int, active_only: bool = True) -> list[dict]:
+    if active_only:
+        async with _db.execute(
+            "SELECT * FROM products WHERE category_id = ? AND is_active = 1", (cat_id,)
+        ) as cur:
+            return _rows(await cur.fetchall())
+    async with _db.execute(
+        "SELECT * FROM products WHERE category_id = ?", (cat_id,)
+    ) as cur:
+        return _rows(await cur.fetchall())
+
+
+async def get_product(product_id: int) -> dict | None:
+    async with _db.execute("SELECT * FROM products WHERE id = ?", (product_id,)) as cur:
+        return _row(await cur.fetchone())
+
+
+async def add_product(cat_id: int, name: str, description: str, price_usd: float, type_: str) -> int:
+    cur = await _db.execute(
+        "INSERT INTO products (category_id, name, description, price_usd, type) VALUES (?, ?, ?, ?, ?)",
+        (cat_id, name, description, price_usd, type_),
+    )
+    await _db.commit()
+    return cur.lastrowid
+
+
+async def update_product_field(product_id: int, field: str, value: Any) -> None:
+    allowed = {"name", "description", "price_usd"}
+    if field not in allowed:
+        raise ValueError(f"Cannot update field: {field}")
+    await _db.execute(f"UPDATE products SET {field} = ? WHERE id = ?", (value, product_id))
+    await _db.commit()
+
+
+async def toggle_product(product_id: int) -> None:
+    await _db.execute(
+        "UPDATE products SET is_active = 1 - is_active WHERE id = ?", (product_id,)
+    )
+    await _db.commit()
+
+
+async def delete_product(product_id: int) -> None:
+    await _db.execute("DELETE FROM products WHERE id = ?", (product_id,))
+    await _db.commit()
+
+
+# --- Stock ---
+
+async def add_stock_items(product_id: int, values: list[str]) -> int:
+    await _db.executemany(
+        "INSERT INTO stock_items (product_id, value) VALUES (?, ?)",
+        [(product_id, v) for v in values],
+    )
+    await _db.commit()
+    return len(values)
+
+
+async def get_available_stock_item(product_id: int) -> dict | None:
+    async with _db.execute(
+        "SELECT * FROM stock_items WHERE product_id = ? AND is_sold = 0 LIMIT 1",
+        (product_id,),
+    ) as cur:
+        return _row(await cur.fetchone())
+
+
+async def mark_stock_sold(item_id: int, user_id: int) -> None:
+    await _db.execute(
+        "UPDATE stock_items SET is_sold = 1, sold_to = ?, sold_at = CURRENT_TIMESTAMP WHERE id = ?",
+        (user_id, item_id),
+    )
+    await _db.commit()
+
+
+async def get_stock_count(product_id: int) -> dict:
+    async with _db.execute(
+        "SELECT COUNT(*) as total, SUM(CASE WHEN is_sold = 0 THEN 1 ELSE 0 END) as available "
+        "FROM stock_items WHERE product_id = ?",
+        (product_id,),
+    ) as cur:
+        row = await cur.fetchone()
+        return {"total": row["total"] or 0, "available": row["available"] or 0}
