@@ -242,10 +242,12 @@ async def add_product(cat_id: int, name: str, description: str, price_usd: float
 
 
 async def update_product_field(product_id: int, field: str, value: Any) -> None:
-    allowed = {"name", "description", "price_usd"}
-    if field not in allowed:
+    # Mapping prevents SQL injection: only these exact column names can be used
+    _allowed_fields = {"name": "name", "description": "description", "price_usd": "price_usd"}
+    col = _allowed_fields.get(field)
+    if col is None:
         raise ValueError(f"Cannot update field: {field}")
-    await _db.execute(f"UPDATE products SET {field} = ? WHERE id = ?", (value, product_id))
+    await _db.execute(f"UPDATE products SET {col} = ? WHERE id = ?", (value, product_id))
     await _db.commit()
 
 
