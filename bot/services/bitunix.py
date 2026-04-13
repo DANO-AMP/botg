@@ -63,6 +63,7 @@ class BitunixClient:
         headers = self._make_headers(query_str=query_str)
         url = f"{path}?{query_str}" if query_str else path
         async with session.get(url, headers=headers) as resp:
+            resp.raise_for_status()
             return await resp.json()
 
     async def _post(self, path: str, body: dict | None = None) -> dict:
@@ -71,12 +72,14 @@ class BitunixClient:
         body_str = json.dumps(body, separators=(",", ":"))
         headers = self._make_headers(body_str=body_str)
         async with session.post(path, headers=headers, data=body_str) as resp:
+            resp.raise_for_status()
             return await resp.json()
 
     async def get_ticker_price(self, symbol: str) -> float:
         """Get current price for symbol (e.g. 'BTCUSDT')."""
         data = await self._get("/api/spot/v1/market/ticker", {"symbol": symbol})
-        return float(data["data"]["close"])
+        price_data = (data.get("data") or {})
+        return float(price_data["close"])
 
     async def get_deposit_address(self, crypto: str) -> str:
         """Get deposit address for given crypto."""
@@ -107,6 +110,7 @@ class BitunixClient:
         })
         for item in (data.get("data") or {}).get("resultList", []):
             if item.get("status") == "success":
-                if abs(float(item["amount"]) - expected_amount) < 0.0001:
+                amount_str = item.get("amount")
+                if amount_str and abs(float(amount_str) - expected_amount) < 0.0001:
                     return True
         return False
