@@ -48,6 +48,7 @@ CREATE TABLE IF NOT EXISTS orders (
     generated_password TEXT,
     delivered_value TEXT,
     amount_usd REAL NOT NULL,
+    balance_used REAL DEFAULT 0.0,
     amount_crypto REAL,
     crypto_currency TEXT,
     deposit_address TEXT,
@@ -330,18 +331,19 @@ async def create_order(
     email: str | None,
     generated_password: str | None,
     amount_usd: float,
-    amount_crypto: float,
-    crypto_currency: str,
-    deposit_address: str,
-    created_at_ms: int,
+    balance_used: float = 0.0,
+    amount_crypto: float = 0.0,
+    crypto_currency: str = "",
+    deposit_address: str = "",
+    created_at_ms: int = 0,
 ) -> int:
     cur = await _db.execute(
         """INSERT INTO orders
            (user_id, product_id, email, generated_password, amount_usd,
-            amount_crypto, crypto_currency, deposit_address, created_at_ms)
-           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+            balance_used, amount_crypto, crypto_currency, deposit_address, created_at_ms)
+           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
         (user_id, product_id, email, generated_password, amount_usd,
-         amount_crypto, crypto_currency, deposit_address, created_at_ms),
+         balance_used, amount_crypto, crypto_currency, deposit_address, created_at_ms),
     )
     await _db.commit()
     return cur.lastrowid

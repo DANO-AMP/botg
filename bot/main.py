@@ -45,6 +45,7 @@ async def main() -> None:
             config.order_timeout_minutes,
             config.payment_check_interval,
             config.admin_telegram_id,
+            bonus_usd=config.referral_bonus_usd,
         )
         logging.info("Bot starting...")
         await dp.start_polling(bot)

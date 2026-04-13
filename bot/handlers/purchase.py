@@ -115,26 +115,27 @@ async def select_crypto(
     await state.clear()
     generated_password = generate_password() if product["type"] == "account" else None
 
+    if use_balance > 0:
+        await db.update_user_balance(callback.from_user.id, -use_balance)
+
     order_id = await db.create_order(
         user_id=callback.from_user.id,
         product_id=product["id"],
         email=email,
         generated_password=generated_password,
         amount_usd=price,
+        balance_used=use_balance,
         amount_crypto=amount_crypto,
         crypto_currency=crypto,
         deposit_address=deposit_address,
         created_at_ms=int(time.time() * 1000),
     )
 
-    if use_balance > 0:
-        await db.update_user_balance(callback.from_user.id, -use_balance)
-
     if crypto_needed <= 0:
         from bot.services.payment_checker import _deliver_and_notify
-        order = await db.get_order(order_id)
         await db.update_order_status(order_id, "paid")
-        await _deliver_and_notify(order_id, order, callback.bot, config.admin_telegram_id)
+        order = await db.get_order(order_id)
+        await _deliver_and_notify(order_id, order, callback.bot, config.admin_telegram_id, bonus_usd=config.referral_bonus_usd)
         await callback.message.edit_text("Payment complete! Check your messages above.")
         await callback.answer()
         return
@@ -156,6 +157,7 @@ async def select_crypto(
         order_id, callback.bot, bitunix,
         config.order_timeout_minutes, config.payment_check_interval,
         config.admin_telegram_id,
+        bonus_usd=config.referral_bonus_usd,
     )
 
     await callback.message.edit_text(
@@ -199,5 +201,7 @@ async def cancel_order(callback: CallbackQuery, callback_data: PurchaseCallback)
         return
     stop_monitor(callback_data.id)
     await db.update_order_status(callback_data.id, "cancelled")
+    if order.get("balance_used", 0.0) > 0:
+        await db.update_user_balance(order["user_id"], order["balance_used"])
     await callback.message.edit_text("Order cancelled.", reply_markup=back_to_main_kb())
     await callback.answer()

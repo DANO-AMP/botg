@@ -16,12 +16,13 @@ async def start_monitor(
     timeout_minutes: int,
     check_interval: int,
     admin_id: int,
+    bonus_usd: float = 10.0,
 ) -> None:
     existing = _tasks.get(order_id)
     if existing and not existing.done():
         existing.cancel()
     task = asyncio.create_task(
-        _monitor_loop(order_id, bot, client, timeout_minutes, check_interval, admin_id)
+        _monitor_loop(order_id, bot, client, timeout_minutes, check_interval, admin_id, bonus_usd)
     )
     _tasks[order_id] = task
 
@@ -38,13 +39,14 @@ async def restore_monitors(
     timeout_minutes: int,
     check_interval: int,
     admin_id: int,
+    bonus_usd: float = 10.0,
 ) -> None:
     pending = await db.get_pending_orders()
     now_ms = int(time.time() * 1000)
     for order in pending:
         deadline_ms = order["created_at_ms"] + timeout_minutes * 60 * 1000
         if now_ms < deadline_ms:
-            await start_monitor(order["id"], bot, client, timeout_minutes, check_interval, admin_id)
+            await start_monitor(order["id"], bot, client, timeout_minutes, check_interval, admin_id, bonus_usd)
         else:
             await db.update_order_status(order["id"], "expired")
 
@@ -56,6 +58,7 @@ async def _monitor_loop(
     timeout_minutes: int,
     check_interval: int,
     admin_id: int,
+    bonus_usd: float = 10.0,
 ) -> None:
     deadline = time.time() + timeout_minutes * 60
     while time.time() < deadline:
@@ -74,7 +77,7 @@ async def _monitor_loop(
             logger.warning("Bitunix check failed for order %s: %s", order_id, e)
             continue
         if found:
-            await _deliver_and_notify(order_id, order, bot, admin_id)
+            await _deliver_and_notify(order_id, order, bot, admin_id, bonus_usd)
             _tasks.pop(order_id, None)
             return
 
@@ -92,7 +95,7 @@ async def _monitor_loop(
     _tasks.pop(order_id, None)
 
 
-async def _deliver_and_notify(order_id: int, order: dict, bot: Bot, admin_id: int) -> None:
+async def _deliver_and_notify(order_id: int, order: dict, bot: Bot, admin_id: int, bonus_usd: float = 10.0) -> None:
     product = await db.get_product(order["product_id"])
     if product is None:
         logger.error("Product not found for order %s", order_id)
@@ -133,7 +136,7 @@ async def _deliver_and_notify(order_id: int, order: dict, bot: Bot, admin_id: in
     await db.update_order_status(order_id, "delivered", {"delivered_value": delivered_value})
 
     bonus_applied = await db.apply_referral_bonus_if_first_purchase(
-        order["user_id"], bonus_usd=10.0
+        order["user_id"], bonus_usd=bonus_usd
     )
     if bonus_applied:
         user_text += "\n\nYou received a $10 referral bonus!"
