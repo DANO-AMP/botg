@@ -290,6 +290,27 @@ async def mark_stock_sold(item_id: int, user_id: int) -> None:
     await _db.commit()
 
 
+async def claim_stock_item(product_id: int, user_id: int) -> dict | None:
+    """Atomically claim an available stock item. Returns the item or None if none available."""
+    assert _db is not None
+    async with _db.execute(
+        "SELECT id, value FROM stock_items WHERE product_id = ? AND is_sold = 0 LIMIT 1",
+        (product_id,),
+    ) as cur:
+        row = await cur.fetchone()
+    if row is None:
+        return None
+    result = await _db.execute(
+        "UPDATE stock_items SET is_sold = 1, sold_to = ?, sold_at = CURRENT_TIMESTAMP "
+        "WHERE id = ? AND is_sold = 0",
+        (user_id, row["id"]),
+    )
+    await _db.commit()
+    if result.rowcount == 0:
+        return None
+    return {"id": row["id"], "value": row["value"]}
+
+
 async def get_stock_count(product_id: int) -> dict:
     async with _db.execute(
         "SELECT COUNT(*) as total, SUM(CASE WHEN is_sold = 0 THEN 1 ELSE 0 END) as available "

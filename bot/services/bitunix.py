@@ -111,6 +111,6 @@ class BitunixClient:
         for item in (data.get("data") or {}).get("resultList", []):
             if item.get("status") == "success":
                 amount_str = item.get("amount")
-                if amount_str and abs(float(amount_str) - expected_amount) < 0.0001:
+                if amount_str and abs(float(amount_str) - expected_amount) < 1e-6:
                     return True
         return False

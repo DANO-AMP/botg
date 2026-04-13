@@ -17,6 +17,9 @@ async def start_monitor(
     check_interval: int,
     admin_id: int,
 ) -> None:
+    existing = _tasks.get(order_id)
+    if existing and not existing.done():
+        existing.cancel()
     task = asyncio.create_task(
         _monitor_loop(order_id, bot, client, timeout_minutes, check_interval, admin_id)
     )
@@ -105,7 +108,7 @@ async def _deliver_and_notify(order_id: int, order: dict, bot: Bot, admin_id: in
         )
         admin_extra = f"\nEmail: {order['email']}\nPassword: {delivered_value}"
     else:
-        stock_item = await db.get_available_stock_item(order["product_id"])
+        stock_item = await db.claim_stock_item(order["product_id"], order["user_id"])
         if not stock_item:
             await db.update_user_balance(order["user_id"], order["amount_usd"])
             await db.update_order_status(order_id, "cancelled")
@@ -118,7 +121,6 @@ async def _deliver_and_notify(order_id: int, order: dict, bot: Bot, admin_id: in
             except Exception:
                 pass
             return
-        await db.mark_stock_sold(stock_item["id"], order["user_id"])
         delivered_value = stock_item["value"]
         user_text = (
             f"Payment confirmed!\n\n"
