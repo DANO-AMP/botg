@@ -1,14 +1,18 @@
+import asyncio
+
 from aiogram import Router, F
 from aiogram.filters import Command
-from aiogram.types import Message, CallbackQuery
+from aiogram.types import InlineKeyboardButton, InlineKeyboardMarkup, Message, CallbackQuery
 from aiogram.fsm.context import FSMContext
 from aiogram.fsm.state import State, StatesGroup
+from aiogram.utils.keyboard import InlineKeyboardBuilder
 
 from bot import db
 from bot.keyboards.inline import (
     AdminCallback, admin_menu_kb, admin_categories_kb, admin_cat_actions_kb,
     admin_products_kb, admin_prod_actions_kb, prod_type_kb,
     confirm_delete_kb, back_to_main_kb,
+    admin_stock_cats_kb, admin_stock_prods_kb, admin_orders_filter_kb,
 )
 
 router = Router()
@@ -345,7 +349,6 @@ async def admin_stock_cat(callback: CallbackQuery) -> None:
     if not callback.message:
         await callback.answer()
         return
-    from bot.keyboards.inline import admin_stock_cats_kb
     cats = await db.get_all_categories()
     await callback.message.edit_text("Select category:", reply_markup=admin_stock_cats_kb(cats))
     await callback.answer()
@@ -356,7 +359,6 @@ async def admin_stock_cat_prods(callback: CallbackQuery, callback_data: AdminCal
     if not callback.message:
         await callback.answer()
         return
-    from bot.keyboards.inline import admin_stock_prods_kb
     prods = await db.get_products_by_category(callback_data.id, active_only=False)
     string_prods = [p for p in prods if p["type"] == "string"]
     if not string_prods:
@@ -425,7 +427,6 @@ async def admin_orders_filter(callback: CallbackQuery) -> None:
     if not callback.message:
         await callback.answer()
         return
-    from bot.keyboards.inline import admin_orders_filter_kb
     await callback.message.edit_text("Filter orders:", reply_markup=admin_orders_filter_kb())
     await callback.answer()
 
@@ -435,7 +436,6 @@ async def admin_orders_list(callback: CallbackQuery, callback_data: AdminCallbac
     if not callback.message:
         await callback.answer()
         return
-    from bot.keyboards.inline import admin_orders_filter_kb
     status = callback_data.action.replace("orders_", "")
     orders = await db.get_orders_by_status(status)
     if not orders:
@@ -485,8 +485,9 @@ async def admin_broadcast(callback: CallbackQuery, state: FSMContext) -> None:
 
 @router.message(AdminStates.waiting_broadcast_text)
 async def receive_broadcast_text(message: Message, state: FSMContext) -> None:
-    from aiogram.utils.keyboard import InlineKeyboardBuilder
-    from aiogram.types import InlineKeyboardButton
+    if not message.text:
+        await message.answer("Please send a text message.")
+        return
     await state.update_data(broadcast_text=message.text)
     await state.set_state(AdminStates.confirm_broadcast)
     users = await db.get_all_users()
@@ -509,17 +510,19 @@ async def admin_broadcast_confirm(callback: CallbackQuery, state: FSMContext) ->
     data = await state.get_data()
     text = data.get("broadcast_text", "")
     await state.clear()
+    if not callback.bot:
+        await callback.answer("Bot unavailable.", show_alert=True)
+        return
     users = await db.get_all_users()
     sent = 0
     failed = 0
-    import asyncio
     for user in users:
         try:
             await callback.bot.send_message(user["id"], text)
             sent += 1
         except Exception:
             failed += 1
-        if sent % 25 == 0:
+        if sent > 0 and sent % 25 == 0:
             await asyncio.sleep(1)
     await callback.message.edit_text(
         f"Broadcast complete.\nSent: {sent}\nFailed: {failed}",
