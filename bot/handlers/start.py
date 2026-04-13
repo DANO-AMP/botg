@@ -13,6 +13,8 @@ WELCOME = "Welcome to the Store!\n\nBrowse products and pay with crypto."
 
 @router.message(CommandStart())
 async def cmd_start(message: Message, state: FSMContext) -> None:
+    if not message.from_user:
+        return
     await state.clear()
     args = message.text.split(maxsplit=1)
     referred_by: int | None = None

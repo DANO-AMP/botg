@@ -62,7 +62,8 @@ CREATE TABLE IF NOT EXISTS referrals (
     referrer_id INTEGER NOT NULL REFERENCES users(id),
     referred_id INTEGER NOT NULL REFERENCES users(id),
     bonus_applied INTEGER DEFAULT 0,
-    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    UNIQUE(referrer_id, referred_id)
 );
 """
 
