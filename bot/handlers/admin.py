@@ -336,3 +336,193 @@ async def admin_prod_delete(callback: CallbackQuery, callback_data: AdminCallbac
     products = await db.get_products_by_category(cat_id, active_only=False)
     await callback.message.edit_text("Product deleted.", reply_markup=admin_products_kb(products, cat_id))
     await callback.answer()
+
+
+# --- Stock ---
+
+@router.callback_query(AdminCallback.filter(F.action == "stock_cat"))
+async def admin_stock_cat(callback: CallbackQuery) -> None:
+    if not callback.message:
+        await callback.answer()
+        return
+    from bot.keyboards.inline import admin_stock_cats_kb
+    cats = await db.get_all_categories()
+    await callback.message.edit_text("Select category:", reply_markup=admin_stock_cats_kb(cats))
+    await callback.answer()
+
+
+@router.callback_query(AdminCallback.filter(F.action == "stock_cat_prods"))
+async def admin_stock_cat_prods(callback: CallbackQuery, callback_data: AdminCallback) -> None:
+    if not callback.message:
+        await callback.answer()
+        return
+    from bot.keyboards.inline import admin_stock_prods_kb
+    prods = await db.get_products_by_category(callback_data.id, active_only=False)
+    string_prods = [p for p in prods if p["type"] == "string"]
+    if not string_prods:
+        await callback.answer("No string products in this category.", show_alert=True)
+        return
+    await callback.message.edit_text("Select product to add stock:", reply_markup=admin_stock_prods_kb(string_prods))
+    await callback.answer()
+
+
+@router.callback_query(AdminCallback.filter(F.action == "stock_add"))
+async def admin_stock_add(callback: CallbackQuery, callback_data: AdminCallback, state: FSMContext) -> None:
+    if not callback.message:
+        await callback.answer()
+        return
+    prod = await db.get_product(callback_data.id)
+    if not prod:
+        await callback.answer("Product not found.", show_alert=True)
+        return
+    await state.set_state(AdminStates.waiting_stock_items)
+    await state.update_data(prod_id=callback_data.id)
+    counts = await db.get_stock_count(callback_data.id)
+    await callback.message.edit_text(
+        f"Product: {prod['name']}\nCurrent stock: {counts['available']} available\n\n"
+        f"Send items one per line:"
+    )
+    await callback.answer()
+
+
+@router.message(AdminStates.waiting_stock_items)
+async def receive_stock_items(message: Message, state: FSMContext) -> None:
+    data = await state.get_data()
+    items = [line.strip() for line in (message.text or "").splitlines() if line.strip()]
+    if not items:
+        await message.answer("No items found. Send at least one item per line:")
+        return
+    added = await db.add_stock_items(data["prod_id"], items)
+    await state.clear()
+    counts = await db.get_stock_count(data["prod_id"])
+    await message.answer(
+        f"{added} items added. Total available: {counts['available']}",
+        reply_markup=admin_menu_kb(),
+    )
+
+
+@router.callback_query(AdminCallback.filter(F.action == "prod_stock"))
+async def admin_prod_stock(callback: CallbackQuery, callback_data: AdminCallback) -> None:
+    if not callback.message:
+        await callback.answer()
+        return
+    prod = await db.get_product(callback_data.id)
+    if not prod:
+        await callback.answer("Product not found.", show_alert=True)
+        return
+    counts = await db.get_stock_count(callback_data.id)
+    await callback.message.edit_text(
+        f"Stock for '{prod['name']}':\nAvailable: {counts['available']}\nTotal loaded: {counts['total']}",
+        reply_markup=admin_prod_actions_kb(prod["id"], bool(prod["is_active"]), prod["type"]),
+    )
+    await callback.answer()
+
+
+# --- Orders ---
+
+@router.callback_query(AdminCallback.filter(F.action == "orders_filter"))
+async def admin_orders_filter(callback: CallbackQuery) -> None:
+    if not callback.message:
+        await callback.answer()
+        return
+    from bot.keyboards.inline import admin_orders_filter_kb
+    await callback.message.edit_text("Filter orders:", reply_markup=admin_orders_filter_kb())
+    await callback.answer()
+
+
+@router.callback_query(AdminCallback.filter(F.action.in_({"orders_pending", "orders_paid", "orders_delivered", "orders_all"})))
+async def admin_orders_list(callback: CallbackQuery, callback_data: AdminCallback) -> None:
+    if not callback.message:
+        await callback.answer()
+        return
+    from bot.keyboards.inline import admin_orders_filter_kb
+    status = callback_data.action.replace("orders_", "")
+    orders = await db.get_orders_by_status(status)
+    if not orders:
+        await callback.answer("No orders found.", show_alert=True)
+        return
+    lines = []
+    for o in orders:
+        lines.append(
+            f"#{o['id']} {o['status'].upper()} @{o.get('username') or '?'} "
+            f"{o['product_name']} ${o['amount_usd']:.2f}"
+        )
+    await callback.message.edit_text(
+        f"Orders ({status}):\n\n" + "\n".join(lines),
+        reply_markup=admin_orders_filter_kb(),
+    )
+    await callback.answer()
+
+
+# --- Stats ---
+
+@router.callback_query(AdminCallback.filter(F.action == "stats"))
+async def admin_stats(callback: CallbackQuery) -> None:
+    if not callback.message:
+        await callback.answer()
+        return
+    stats = await db.get_admin_stats()
+    await callback.message.edit_text(
+        f"Stats:\n\nTotal orders delivered: {stats['total_orders']}\n"
+        f"Total revenue: ${stats['revenue']:.2f}\n"
+        f"Total users: {stats['total_users']}",
+        reply_markup=admin_menu_kb(),
+    )
+    await callback.answer()
+
+
+# --- Broadcast ---
+
+@router.callback_query(AdminCallback.filter(F.action == "broadcast"))
+async def admin_broadcast(callback: CallbackQuery, state: FSMContext) -> None:
+    if not callback.message:
+        await callback.answer()
+        return
+    await state.set_state(AdminStates.waiting_broadcast_text)
+    await callback.message.edit_text("Enter message to broadcast to all users:")
+    await callback.answer()
+
+
+@router.message(AdminStates.waiting_broadcast_text)
+async def receive_broadcast_text(message: Message, state: FSMContext) -> None:
+    from aiogram.utils.keyboard import InlineKeyboardBuilder
+    from aiogram.types import InlineKeyboardButton
+    await state.update_data(broadcast_text=message.text)
+    await state.set_state(AdminStates.confirm_broadcast)
+    users = await db.get_all_users()
+    b = InlineKeyboardBuilder()
+    b.row(
+        InlineKeyboardButton(text="Send", callback_data=AdminCallback(action="broadcast_confirm").pack()),
+        InlineKeyboardButton(text="Cancel", callback_data=AdminCallback(action="menu").pack()),
+    )
+    await message.answer(
+        f"Send to {len(users)} users?\n\nPreview:\n{message.text}",
+        reply_markup=b.as_markup(),
+    )
+
+
+@router.callback_query(AdminCallback.filter(F.action == "broadcast_confirm"))
+async def admin_broadcast_confirm(callback: CallbackQuery, state: FSMContext) -> None:
+    if not callback.message:
+        await callback.answer()
+        return
+    data = await state.get_data()
+    text = data.get("broadcast_text", "")
+    await state.clear()
+    users = await db.get_all_users()
+    sent = 0
+    failed = 0
+    import asyncio
+    for user in users:
+        try:
+            await callback.bot.send_message(user["id"], text)
+            sent += 1
+        except Exception:
+            failed += 1
+        if sent % 25 == 0:
+            await asyncio.sleep(1)
+    await callback.message.edit_text(
+        f"Broadcast complete.\nSent: {sent}\nFailed: {failed}",
+        reply_markup=admin_menu_kb(),
+    )
+    await callback.answer()
