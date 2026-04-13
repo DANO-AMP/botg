@@ -71,6 +71,7 @@ async def connect(db_path: str) -> None:
     global _db
     os.makedirs(os.path.dirname(db_path) or ".", exist_ok=True)
     _db = await aiosqlite.connect(db_path)
+    assert _db is not None
     _db.row_factory = aiosqlite.Row
     await _db.executescript(SCHEMA)
     await _db.commit()
