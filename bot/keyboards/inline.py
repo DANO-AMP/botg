@@ -118,6 +118,9 @@ def admin_menu_kb() -> InlineKeyboardMarkup:
         InlineKeyboardButton(text="Stats", callback_data=AdminCallback(action="stats").pack()),
         InlineKeyboardButton(text="Broadcast", callback_data=AdminCallback(action="broadcast").pack()),
     )
+    b.row(
+        InlineKeyboardButton(text="Add Balance", callback_data=AdminCallback(action="balance_user").pack()),
+    )
     return b.as_markup()
 
 

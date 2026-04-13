@@ -28,6 +28,8 @@ class AdminStates(StatesGroup):
     waiting_stock_items = State()
     waiting_broadcast_text = State()
     confirm_broadcast = State()
+    waiting_balance_user_id = State()
+    waiting_balance_amount = State()
 
 
 @router.message(Command("admin"))
@@ -529,3 +531,59 @@ async def admin_broadcast_confirm(callback: CallbackQuery, state: FSMContext) ->
         reply_markup=admin_menu_kb(),
     )
     await callback.answer()
+
+
+# --- Balance Management ---
+
+@router.callback_query(AdminCallback.filter(F.action == "balance_user"))
+async def admin_balance_user(callback: CallbackQuery, state: FSMContext) -> None:
+    if not callback.message:
+        await callback.answer()
+        return
+    await state.set_state(AdminStates.waiting_balance_user_id)
+    await callback.message.edit_text(
+        "Enter the user's Telegram ID to add balance:"
+    )
+    await callback.answer()
+
+
+@router.message(AdminStates.waiting_balance_user_id)
+async def receive_balance_user_id(message: Message, state: FSMContext) -> None:
+    raw = (message.text or "").strip()
+    try:
+        user_id = int(raw)
+    except ValueError:
+        await message.answer("Invalid ID. Enter a numeric Telegram user ID:")
+        return
+    user = await db.get_user(user_id)
+    if not user:
+        await message.answer(f"User {user_id} not found in the database. They must have started the bot first.")
+        return
+    await state.update_data(target_user_id=user_id)
+    await state.set_state(AdminStates.waiting_balance_amount)
+    username = f"@{user['username']}" if user.get("username") else str(user_id)
+    await message.answer(
+        f"User: {username}\nCurrent balance: ${user['balance']:.2f}\n\n"
+        f"Enter amount to add (positive to credit, negative to deduct, e.g. 10 or -5):"
+    )
+
+
+@router.message(AdminStates.waiting_balance_amount)
+async def receive_balance_amount(message: Message, state: FSMContext) -> None:
+    raw = (message.text or "").strip().replace(",", ".")
+    try:
+        amount = float(raw)
+    except ValueError:
+        await message.answer("Invalid amount. Enter a number (e.g. 10 or -5):")
+        return
+    data = await state.get_data()
+    user_id = data["target_user_id"]
+    await db.update_user_balance(user_id, amount)
+    await state.clear()
+    user = await db.get_user(user_id)
+    username = f"@{user['username']}" if user.get("username") else str(user_id)
+    sign = "+" if amount >= 0 else ""
+    await message.answer(
+        f"Done. {username} balance updated: {sign}${amount:.2f}\nNew balance: ${user['balance']:.2f}",
+        reply_markup=admin_menu_kb(),
+    )
