@@ -22,7 +22,6 @@ async def main() -> None:
 
     bot = Bot(token=config.telegram_token)
     dp = Dispatcher(storage=MemoryStorage())
-
     bitunix = BitunixClient(config.bitunix_api_key, config.bitunix_secret_key)
 
     dp["config"] = config
@@ -40,15 +39,14 @@ async def main() -> None:
         admin_router,
     )
 
-    await restore_monitors(
-        bot, bitunix,
-        config.order_timeout_minutes,
-        config.payment_check_interval,
-        config.admin_telegram_id,
-    )
-
-    logging.info("Bot starting...")
     try:
+        await restore_monitors(
+            bot, bitunix,
+            config.order_timeout_minutes,
+            config.payment_check_interval,
+            config.admin_telegram_id,
+        )
+        logging.info("Bot starting...")
         await dp.start_polling(bot)
     finally:
         await db.close()
