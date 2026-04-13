@@ -93,12 +93,8 @@ def _rows(rows: list[aiosqlite.Row]) -> list[dict]:
 # --- Users ---
 
 async def get_or_create_user(user_id: int, username: str | None, referred_by: int | None = None) -> dict:
-    async with _db.execute("SELECT * FROM users WHERE id = ?", (user_id,)) as cur:
-        row = await cur.fetchone()
-    if row:
-        return dict(row)
     await _db.execute(
-        "INSERT INTO users (id, username, referred_by) VALUES (?, ?, ?)",
+        "INSERT OR IGNORE INTO users (id, username, referred_by) VALUES (?, ?, ?)",
         (user_id, username, referred_by),
     )
     await _db.commit()
@@ -134,30 +130,30 @@ async def add_referral(referrer_id: int, referred_id: int) -> None:
 
 
 async def apply_referral_bonus_if_first_purchase(user_id: int, bonus_usd: float) -> bool:
-    """Returns True if bonus was applied (first purchase triggers it)."""
-    async with _db.execute(
-        "SELECT * FROM referrals WHERE referred_id = ? AND bonus_applied = 0",
+    """Returns True if bonus was applied (first purchase triggers it). Atomic to prevent double-apply."""
+    cur = await _db.execute(
+        "UPDATE referrals SET bonus_applied = 1 WHERE referred_id = ? AND bonus_applied = 0",
         (user_id,),
-    ) as cur:
-        row = await cur.fetchone()
-    if not row:
-        return False
-    referrer_id = row["referrer_id"]
-    referral_id = row["id"]
-    await _db.execute(
-        "UPDATE referrals SET bonus_applied = 1 WHERE id = ?", (referral_id,)
-    )
-    await _db.execute(
-        "UPDATE users SET balance = balance + ? WHERE id = ?", (bonus_usd, user_id)
-    )
-    await _db.execute(
-        "UPDATE users SET balance = balance + ? WHERE id = ?", (bonus_usd, referrer_id)
     )
     await _db.commit()
+    if cur.rowcount == 0:
+        return False
+    async with _db.execute(
+        "SELECT referrer_id FROM referrals WHERE referred_id = ?", (user_id,)
+    ) as sel:
+        row = await sel.fetchone()
+    if row:
+        await _db.execute(
+            "UPDATE users SET balance = balance + ? WHERE id = ?", (bonus_usd, user_id)
+        )
+        await _db.execute(
+            "UPDATE users SET balance = balance + ? WHERE id = ?", (bonus_usd, row["referrer_id"])
+        )
+        await _db.commit()
     return True
 
 
-async def get_referral_stats(user_id: int) -> dict:
+async def get_referral_stats(user_id: int, bonus_per_referral: float = 10.0) -> dict:
     async with _db.execute(
         "SELECT COUNT(*) as count FROM referrals WHERE referrer_id = ?", (user_id,)
     ) as cur:
@@ -167,7 +163,6 @@ async def get_referral_stats(user_id: int) -> dict:
         (user_id,),
     ) as cur:
         earned_row = await cur.fetchone()
-    bonus_per_referral = 10.0
     return {
         "count": count_row["count"],
         "total_earned": earned_row["earned"] * bonus_per_referral,
