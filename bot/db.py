@@ -336,7 +336,12 @@ async def get_order(order_id: int) -> dict | None:
 
 
 async def update_order_status(order_id: int, status: str, extra: dict | None = None) -> None:
+    _allowed_extra = {"email", "generated_password", "delivered_value",
+                      "amount_crypto", "crypto_currency", "deposit_address"}
     extra = extra or {}
+    for k in extra:
+        if k not in _allowed_extra:
+            raise ValueError(f"Cannot update field: {k}")
     fields = ["status = ?"]
     values: list[Any] = [status]
     for k, v in extra.items():
