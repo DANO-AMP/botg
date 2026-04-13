@@ -133,3 +133,55 @@ async def test_stock_items(test_db):
     await db.mark_stock_sold(item["id"], 1)
     counts = await db.get_stock_count(prod_id)
     assert counts["available"] == 2
+
+
+@pytest.mark.asyncio
+async def test_order_lifecycle(test_db):
+    import time
+    await db.get_or_create_user(1, "u", None)
+    cat_id = await db.add_category("Cat", "")
+    prod_id = await db.add_product(cat_id, "Prod", "", 5.0, "account")
+    order_id = await db.create_order(
+        user_id=1, product_id=prod_id, email="a@b.com",
+        generated_password="pass123", amount_usd=5.0,
+        amount_crypto=5.003, crypto_currency="USDT",
+        deposit_address="TXabc123", created_at_ms=int(time.time() * 1000),
+    )
+    order = await db.get_order(order_id)
+    assert order["status"] == "pending"
+    assert order["email"] == "a@b.com"
+    assert order["product_name"] == "Prod"
+    await db.update_order_status(order_id, "delivered", {"delivered_value": "pass123"})
+    order = await db.get_order(order_id)
+    assert order["status"] == "delivered"
+    assert order["delivered_value"] == "pass123"
+
+
+@pytest.mark.asyncio
+async def test_get_orders_by_status(test_db):
+    import time
+    await db.get_or_create_user(1, "u", None)
+    cat_id = await db.add_category("Cat", "")
+    prod_id = await db.add_product(cat_id, "Prod", "", 5.0, "account")
+    now_ms = int(time.time() * 1000)
+    await db.create_order(1, prod_id, None, None, 5.0, 5.003, "USDT", "addr1", now_ms)
+    await db.create_order(1, prod_id, None, None, 5.0, 5.004, "USDT", "addr2", now_ms)
+    orders = await db.get_orders_by_status("pending")
+    assert len(orders) == 2
+    orders_all = await db.get_orders_by_status("all")
+    assert len(orders_all) == 2
+
+
+@pytest.mark.asyncio
+async def test_admin_stats(test_db):
+    import time
+    await db.get_or_create_user(1, "u", None)
+    cat_id = await db.add_category("Cat", "")
+    prod_id = await db.add_product(cat_id, "Prod", "", 5.0, "account")
+    now_ms = int(time.time() * 1000)
+    order_id = await db.create_order(1, prod_id, None, None, 5.0, 5.003, "USDT", "addr", now_ms)
+    await db.update_order_status(order_id, "delivered")
+    stats = await db.get_admin_stats()
+    assert stats["total_orders"] == 1
+    assert stats["revenue"] == 5.0
+    assert stats["total_users"] == 1

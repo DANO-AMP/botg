@@ -298,3 +298,108 @@ async def get_stock_count(product_id: int) -> dict:
     ) as cur:
         row = await cur.fetchone()
         return {"total": row["total"] or 0, "available": row["available"] or 0}
+
+
+# --- Orders ---
+
+async def create_order(
+    user_id: int,
+    product_id: int,
+    email: str | None,
+    generated_password: str | None,
+    amount_usd: float,
+    amount_crypto: float,
+    crypto_currency: str,
+    deposit_address: str,
+    created_at_ms: int,
+) -> int:
+    cur = await _db.execute(
+        """INSERT INTO orders
+           (user_id, product_id, email, generated_password, amount_usd,
+            amount_crypto, crypto_currency, deposit_address, created_at_ms)
+           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+        (user_id, product_id, email, generated_password, amount_usd,
+         amount_crypto, crypto_currency, deposit_address, created_at_ms),
+    )
+    await _db.commit()
+    return cur.lastrowid
+
+
+async def get_order(order_id: int) -> dict | None:
+    async with _db.execute(
+        """SELECT o.*, p.name as product_name, p.type as product_type
+           FROM orders o JOIN products p ON o.product_id = p.id
+           WHERE o.id = ?""",
+        (order_id,),
+    ) as cur:
+        return _row(await cur.fetchone())
+
+
+async def update_order_status(order_id: int, status: str, extra: dict | None = None) -> None:
+    extra = extra or {}
+    fields = ["status = ?"]
+    values: list[Any] = [status]
+    for k, v in extra.items():
+        fields.append(f"{k} = ?")
+        values.append(v)
+    if status == "delivered":
+        fields.append("paid_at = CURRENT_TIMESTAMP")
+    values.append(order_id)
+    await _db.execute(
+        f"UPDATE orders SET {', '.join(fields)} WHERE id = ?", values
+    )
+    await _db.commit()
+
+
+async def get_user_orders(user_id: int) -> list[dict]:
+    async with _db.execute(
+        """SELECT o.*, p.name as product_name
+           FROM orders o JOIN products p ON o.product_id = p.id
+           WHERE o.user_id = ?
+           ORDER BY o.created_at DESC LIMIT 20""",
+        (user_id,),
+    ) as cur:
+        return _rows(await cur.fetchall())
+
+
+async def get_orders_by_status(status: str) -> list[dict]:
+    if status == "all":
+        async with _db.execute(
+            """SELECT o.*, p.name as product_name, u.username
+               FROM orders o
+               JOIN products p ON o.product_id = p.id
+               JOIN users u ON o.user_id = u.id
+               ORDER BY o.created_at DESC LIMIT 50"""
+        ) as cur:
+            return _rows(await cur.fetchall())
+    async with _db.execute(
+        """SELECT o.*, p.name as product_name, u.username
+           FROM orders o
+           JOIN products p ON o.product_id = p.id
+           JOIN users u ON o.user_id = u.id
+           WHERE o.status = ?
+           ORDER BY o.created_at DESC LIMIT 50""",
+        (status,),
+    ) as cur:
+        return _rows(await cur.fetchall())
+
+
+async def get_pending_orders() -> list[dict]:
+    async with _db.execute(
+        "SELECT * FROM orders WHERE status = 'pending'"
+    ) as cur:
+        return _rows(await cur.fetchall())
+
+
+async def get_admin_stats() -> dict:
+    async with _db.execute(
+        "SELECT COUNT(*) as total, SUM(amount_usd) as revenue FROM orders WHERE status = 'delivered'"
+    ) as cur:
+        row = await cur.fetchone()
+    async with _db.execute("SELECT COUNT(*) as users FROM users") as cur:
+        users_row = await cur.fetchone()
+    return {
+        "total_orders": row["total"] or 0,
+        "revenue": row["revenue"] or 0.0,
+        "total_users": users_row["users"] or 0,
+    }
