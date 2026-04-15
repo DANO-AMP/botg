@@ -8,9 +8,11 @@ from aiogram.types import BotCommand, MenuButtonCommands
 
 from bot.config import load_config
 from bot import db
-from bot.services.cryptopay import CryptoPayClient
-from bot.services.payment_checker import restore_monitors, cancel_all_monitors
-from bot.services.deposit_checker import restore_deposit_monitors, cancel_all_deposit_monitors
+from bot.services.maxelpay import MaxelPayClient
+from bot.services.webhook_server import (
+    start_webhook_server, stop_webhook_server,
+    restore_expiry_timers, cancel_all_expiry_timers,
+)
 from bot.handlers import start, catalog, purchase, admin, referral, deposit
 from bot.middlewares.auth import AdminMiddleware
 
@@ -24,10 +26,15 @@ async def main() -> None:
 
     bot = Bot(token=config.telegram_token)
     dp = Dispatcher(storage=MemoryStorage())
-    cryptopay = CryptoPayClient(config.cryptobot_token)
+    maxelpay = MaxelPayClient(
+        api_key=config.maxelpay_api_key,
+        secret_key=config.maxelpay_secret_key,
+        webhook_base_url=config.webhook_base_url,
+        mode=config.maxelpay_mode,
+    )
 
     dp["config"] = config
-    dp["cryptopay"] = cryptopay
+    dp["maxelpay"] = maxelpay
 
     admin_router = admin.router
     admin_router.message.middleware(AdminMiddleware(config))
@@ -49,26 +56,20 @@ async def main() -> None:
     await bot.set_chat_menu_button(menu_button=MenuButtonCommands())
 
     try:
-        await restore_monitors(
-            bot, cryptopay,
-            config.order_timeout_minutes,
-            config.payment_check_interval,
-            config.admin_telegram_ids[0],
+        await start_webhook_server(
+            bot, maxelpay,
+            port=config.webhook_port,
+            admin_id=config.admin_telegram_ids[0],
             bonus_usd=config.referral_bonus_usd,
         )
-        await restore_deposit_monitors(
-            bot, cryptopay,
-            config.order_timeout_minutes,
-            config.payment_check_interval,
-            admin_id=config.admin_telegram_ids[0],
-        )
+        await restore_expiry_timers(config.order_timeout_minutes)
         logging.info("Bot starting...")
         await dp.start_polling(bot)
     finally:
-        cancel_all_monitors()
-        cancel_all_deposit_monitors()
+        cancel_all_expiry_timers()
+        await stop_webhook_server()
         await db.close()
-        await cryptopay.close()
+        await maxelpay.close()
         logging.info("Bot stopped.")
 
 

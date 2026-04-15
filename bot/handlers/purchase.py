@@ -10,10 +10,10 @@ from bot import db
 from bot.keyboards.inline import (
     PurchaseCallback, payment_pending_kb, back_to_main_kb,
 )
-from bot.services.cryptopay import CryptoPayClient
+from bot.services.maxelpay import MaxelPayClient
 from bot.services.password import generate_password
-from bot.services.payment_checker import start_monitor, stop_monitor
 from bot.services.delivery import deliver_and_notify
+from bot.services.webhook_server import start_expiry_timer
 from bot.services.notifications import notify_admin
 from bot.config import Config
 
@@ -31,7 +31,7 @@ async def buy_start(
     callback: CallbackQuery,
     callback_data: PurchaseCallback,
     state: FSMContext,
-    cryptopay: CryptoPayClient,
+    maxelpay: MaxelPayClient,
     config: Config,
 ) -> None:
     if not callback.message:
@@ -61,7 +61,7 @@ async def buy_start(
                 await callback.message.edit_text(text, **kwargs)
 
         await _check_balance_and_process(
-            callback.from_user.id, product, config, callback.bot, cryptopay, _reply,
+            callback.from_user.id, product, config, callback.bot, maxelpay, _reply,
         )
     else:
         await state.set_state(PurchaseStates.waiting_email)
@@ -76,7 +76,7 @@ async def buy_start(
 async def receive_email(
     message: Message,
     state: FSMContext,
-    cryptopay: CryptoPayClient,
+    maxelpay: MaxelPayClient,
     config: Config,
 ) -> None:
     if not message.from_user:
@@ -94,7 +94,7 @@ async def receive_email(
         return
     await state.clear()
     await _check_balance_and_process(
-        message.from_user.id, product, config, message.bot, cryptopay, message.answer, email=email,
+        message.from_user.id, product, config, message.bot, maxelpay, message.answer, email=email,
     )
 
 
@@ -103,12 +103,12 @@ async def _check_balance_and_process(
     product: dict,
     config: Config,
     bot: Bot,
-    cryptopay: CryptoPayClient,
+    maxelpay: MaxelPayClient,
     reply: ReplyFn,
     email: str | None = None,
 ) -> None:
     """Check if balance covers the order. If fully covered, process immediately.
-    Otherwise, create a CryptoPay invoice for the remaining amount."""
+    Otherwise, create a MaxelPay checkout for the remaining amount."""
     user = await db.get_user(user_id)
     balance = user["balance"] if user else 0.0
     price = product["price_usd"]
@@ -136,34 +136,11 @@ async def _check_balance_and_process(
         await reply("✅ Payment complete! Check your messages above.")
         return
 
-    # Create CryptoPay invoice for remaining amount
-    try:
-        invoice = await cryptopay.create_invoice(
-            amount_usd=remaining,
-            description=f"Purchase: {product['name']}",
-            expires_in=config.order_timeout_minutes * 60,
-            payload=f"order:user:{user_id}:product:{product['id']}",
-        )
-    except Exception:
-        await reply("Error creating payment. Please try again.", reply_markup=back_to_main_kb())
-        return
-
+    # Deduct balance first if applicable
     if use_balance > 0:
         if not await db.deduct_balance_if_sufficient(user_id, use_balance):
-            # Balance changed, delete first invoice and recreate for full price
-            await cryptopay.delete_invoice(invoice["invoice_id"])
             use_balance = 0.0
             remaining = price
-            try:
-                invoice = await cryptopay.create_invoice(
-                    amount_usd=price,
-                    description=f"Purchase: {product['name']}",
-                    expires_in=config.order_timeout_minutes * 60,
-                    payload=f"order:user:{user_id}:product:{product['id']}",
-                )
-            except Exception:
-                await reply("Error creating payment. Please try again.", reply_markup=back_to_main_kb())
-                return
 
     generated_password = generate_password() if product["type"] == "account" else None
     order_id = await db.create_order(
@@ -174,14 +151,27 @@ async def _check_balance_and_process(
         amount_usd=price,
         balance_used=use_balance,
         created_at_ms=int(time.time() * 1000),
-        invoice_id=str(invoice["invoice_id"]),
     )
 
-    await start_monitor(
-        order_id, bot, cryptopay,
-        config.order_timeout_minutes, config.payment_check_interval,
-        config.admin_telegram_ids[0], bonus_usd=config.referral_bonus_usd,
-    )
+    # Create MaxelPay checkout
+    maxelpay_order_id = f"order_{order_id}"
+    try:
+        checkout = await maxelpay.create_checkout(
+            order_id=maxelpay_order_id,
+            amount=remaining,
+            user_name=str(user_id),
+            user_email=email or "",
+        )
+    except Exception:
+        # Rollback: cancel order and refund balance
+        await db.update_order_status(order_id, "cancelled")
+        if use_balance > 0:
+            await db.update_user_balance(user_id, use_balance)
+        await reply("Error creating payment. Please try again.", reply_markup=back_to_main_kb())
+        return
+
+    # Start expiry timer
+    start_expiry_timer(maxelpay_order_id, config.order_timeout_minutes)
 
     text = (
         f"🧾 Order #{order_id}\n\n"
@@ -199,7 +189,7 @@ async def _check_balance_and_process(
     await notify_admin(bot, config.admin_telegram_ids,
         f"🧾 New order #{order_id}\n👤 User: {user_id}\n📦 {product['name']}\n💲 ${price:.2f} (pay: ${remaining:.2f})")
 
-    await reply(text, reply_markup=payment_pending_kb(order_id, invoice["pay_url"]))
+    await reply(text, reply_markup=payment_pending_kb(order_id, checkout["payment_url"]))
 
 
 @router.callback_query(PurchaseCallback.filter(F.action == "check"))
@@ -215,7 +205,7 @@ async def check_payment(callback: CallbackQuery, callback_data: PurchaseCallback
         await callback.answer("Order not found.", show_alert=True)
         return
     status_msg = {
-        "pending": "Payment not confirmed yet. Please wait or try again.",
+        "pending": "Payment not confirmed yet. Please complete payment and wait for confirmation.",
         "delivered": "Your order has been delivered!",
         "expired": "This order has expired.",
         "cancelled": "This order was cancelled.",
@@ -224,7 +214,7 @@ async def check_payment(callback: CallbackQuery, callback_data: PurchaseCallback
 
 
 @router.callback_query(PurchaseCallback.filter(F.action == "cancel"))
-async def cancel_order(callback: CallbackQuery, callback_data: PurchaseCallback, cryptopay: CryptoPayClient, config: Config) -> None:
+async def cancel_order(callback: CallbackQuery, callback_data: PurchaseCallback, config: Config) -> None:
     if not callback.message:
         await callback.answer("Session expired.", show_alert=True)
         return
@@ -238,9 +228,8 @@ async def cancel_order(callback: CallbackQuery, callback_data: PurchaseCallback,
     if order["status"] != "pending":
         await callback.answer("Cannot cancel this order.", show_alert=True)
         return
-    stop_monitor(callback_data.id)
-    if order.get("invoice_id"):
-        await cryptopay.delete_invoice(int(order["invoice_id"]))
+    from bot.services.webhook_server import _cancel_expiry
+    _cancel_expiry(f"order_{callback_data.id}")
     await db.update_order_status(callback_data.id, "cancelled")
     if order.get("balance_used", 0.0) > 0:
         await db.update_user_balance(order["user_id"], order["balance_used"])

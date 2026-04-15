@@ -8,8 +8,8 @@ from bot import db
 from bot.keyboards.inline import (
     DepositCallback, deposit_pending_kb, back_to_main_kb,
 )
-from bot.services.cryptopay import CryptoPayClient
-from bot.services.deposit_checker import start_deposit_monitor, stop_deposit_monitor
+from bot.services.maxelpay import MaxelPayClient
+from bot.services.webhook_server import start_expiry_timer
 from bot.services.notifications import notify_admin
 from bot.config import Config
 
@@ -36,7 +36,7 @@ async def deposit_start(callback: CallbackQuery, state: FSMContext) -> None:
 async def receive_deposit_amount(
     message: Message,
     state: FSMContext,
-    cryptopay: CryptoPayClient,
+    maxelpay: MaxelPayClient,
     config: Config,
 ) -> None:
     if not message.from_user:
@@ -61,32 +61,29 @@ async def receive_deposit_amount(
         )
         return
 
+    deposit_id = await db.create_deposit(
+        user_id=message.from_user.id,
+        amount_usd=amount,
+        created_at_ms=int(time.time() * 1000),
+    )
+
+    maxelpay_order_id = f"deposit_{deposit_id}"
     try:
-        invoice = await cryptopay.create_invoice(
-            amount_usd=amount,
-            description=f"Balance deposit ${amount:.2f}",
-            expires_in=config.order_timeout_minutes * 60,
-            payload=f"deposit:user:{message.from_user.id}:amount:{amount}",
+        checkout = await maxelpay.create_checkout(
+            order_id=maxelpay_order_id,
+            amount=amount,
+            user_name=str(message.from_user.id),
+            user_email="",
         )
     except Exception:
+        await db.update_deposit_status(deposit_id, "cancelled")
         await message.answer(
             "Error creating payment. Please try again.",
             reply_markup=back_to_main_kb(),
         )
         return
 
-    deposit_id = await db.create_deposit(
-        user_id=message.from_user.id,
-        amount_usd=amount,
-        created_at_ms=int(time.time() * 1000),
-        invoice_id=str(invoice["invoice_id"]),
-    )
-
-    await start_deposit_monitor(
-        deposit_id, message.bot, cryptopay,
-        config.order_timeout_minutes, config.payment_check_interval,
-        admin_id=config.admin_telegram_ids[0],
-    )
+    start_expiry_timer(maxelpay_order_id, config.order_timeout_minutes)
 
     reply_text = (
         f"💎 Deposit #{deposit_id}\n\n"
@@ -97,7 +94,7 @@ async def receive_deposit_amount(
     await notify_admin(message.bot, config.admin_telegram_ids,
         f"💎 New deposit #{deposit_id}\n👤 User: {message.from_user.id}\n💲 ${amount:.2f}")
 
-    await message.answer(reply_text, reply_markup=deposit_pending_kb(deposit_id, invoice["pay_url"]))
+    await message.answer(reply_text, reply_markup=deposit_pending_kb(deposit_id, checkout["payment_url"]))
 
 
 @router.callback_query(DepositCallback.filter(F.action == "check"))
@@ -110,7 +107,7 @@ async def check_deposit_payment(callback: CallbackQuery, callback_data: DepositC
         await callback.answer("Deposit not found.", show_alert=True)
         return
     status_msg = {
-        "pending": "Payment not confirmed yet. Please wait or try again.",
+        "pending": "Payment not confirmed yet. Please complete payment and wait for confirmation.",
         "completed": "Deposit confirmed! Your balance has been credited.",
         "expired": "This deposit request has expired.",
         "cancelled": "This deposit was cancelled.",
@@ -119,7 +116,7 @@ async def check_deposit_payment(callback: CallbackQuery, callback_data: DepositC
 
 
 @router.callback_query(DepositCallback.filter(F.action == "cancel"))
-async def cancel_deposit(callback: CallbackQuery, callback_data: DepositCallback, cryptopay: CryptoPayClient, config: Config) -> None:
+async def cancel_deposit(callback: CallbackQuery, callback_data: DepositCallback, config: Config) -> None:
     if not callback.message:
         await callback.answer("Session expired.", show_alert=True)
         return
@@ -133,9 +130,8 @@ async def cancel_deposit(callback: CallbackQuery, callback_data: DepositCallback
     if deposit["status"] != "pending":
         await callback.answer("Cannot cancel this deposit.", show_alert=True)
         return
-    stop_deposit_monitor(callback_data.id)
-    if deposit.get("invoice_id"):
-        await cryptopay.delete_invoice(int(deposit["invoice_id"]))
+    from bot.services.webhook_server import _cancel_expiry
+    _cancel_expiry(f"deposit_{callback_data.id}")
     await db.update_deposit_status(callback_data.id, "cancelled")
     await notify_admin(callback.bot, config.admin_telegram_ids,
         f"❌ Deposit #{callback_data.id} cancelled by user {callback.from_user.id}")
