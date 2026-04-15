@@ -6,6 +6,7 @@ COPY requirements.txt .
 RUN pip install --no-cache-dir -r requirements.txt
 
 COPY bot/ bot/
-COPY data/ data/ 2>/dev/null || true
+
+RUN mkdir -p data
 
 CMD ["python", "-m", "bot.main"]
