@@ -132,7 +132,7 @@ async def _check_balance_and_process(
         )
         await db.update_order_status(order_id, "paid")
         order = await db.get_order(order_id)
-        await deliver_and_notify(order_id, order, bot, config.admin_telegram_id, bonus_usd=config.referral_bonus_usd)
+        await deliver_and_notify(order_id, order, bot, config.admin_telegram_ids[0], bonus_usd=config.referral_bonus_usd)
         await reply("✅ Payment complete! Check your messages above.")
         return
 
@@ -180,7 +180,7 @@ async def _check_balance_and_process(
     await start_monitor(
         order_id, bot, cryptopay,
         config.order_timeout_minutes, config.payment_check_interval,
-        config.admin_telegram_id, bonus_usd=config.referral_bonus_usd,
+        config.admin_telegram_ids[0], bonus_usd=config.referral_bonus_usd,
     )
 
     text = (
@@ -196,7 +196,7 @@ async def _check_balance_and_process(
         f"⏱ You have {config.order_timeout_minutes} minutes."
     )
 
-    await notify_admin(bot, config.admin_telegram_id,
+    await notify_admin(bot, config.admin_telegram_ids,
         f"🧾 New order #{order_id}\n👤 User: {user_id}\n📦 {product['name']}\n💲 ${price:.2f} (pay: ${remaining:.2f})")
 
     await reply(text, reply_markup=payment_pending_kb(order_id, invoice["pay_url"]))
@@ -244,7 +244,7 @@ async def cancel_order(callback: CallbackQuery, callback_data: PurchaseCallback,
     await db.update_order_status(callback_data.id, "cancelled")
     if order.get("balance_used", 0.0) > 0:
         await db.update_user_balance(order["user_id"], order["balance_used"])
-    await notify_admin(callback.bot, config.admin_telegram_id,
+    await notify_admin(callback.bot, config.admin_telegram_ids,
         f"❌ Order #{callback_data.id} cancelled by user {callback.from_user.id}")
     await callback.message.edit_text("❌ Order cancelled.", reply_markup=back_to_main_kb())
     await callback.answer()

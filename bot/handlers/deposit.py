@@ -85,7 +85,7 @@ async def receive_deposit_amount(
     await start_deposit_monitor(
         deposit_id, message.bot, cryptopay,
         config.order_timeout_minutes, config.payment_check_interval,
-        admin_id=config.admin_telegram_id,
+        admin_id=config.admin_telegram_ids[0],
     )
 
     reply_text = (
@@ -94,7 +94,7 @@ async def receive_deposit_amount(
         f"Tap 💳 Pay Now to complete payment.\n"
         f"⏱ You have {config.order_timeout_minutes} minutes."
     )
-    await notify_admin(message.bot, config.admin_telegram_id,
+    await notify_admin(message.bot, config.admin_telegram_ids,
         f"💎 New deposit #{deposit_id}\n👤 User: {message.from_user.id}\n💲 ${amount:.2f}")
 
     await message.answer(reply_text, reply_markup=deposit_pending_kb(deposit_id, invoice["pay_url"]))
@@ -137,7 +137,7 @@ async def cancel_deposit(callback: CallbackQuery, callback_data: DepositCallback
     if deposit.get("invoice_id"):
         await cryptopay.delete_invoice(int(deposit["invoice_id"]))
     await db.update_deposit_status(callback_data.id, "cancelled")
-    await notify_admin(callback.bot, config.admin_telegram_id,
+    await notify_admin(callback.bot, config.admin_telegram_ids,
         f"❌ Deposit #{callback_data.id} cancelled by user {callback.from_user.id}")
     await callback.message.edit_text("❌ Deposit cancelled.", reply_markup=back_to_main_kb())
     await callback.answer()

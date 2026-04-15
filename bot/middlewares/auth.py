@@ -6,7 +6,7 @@ from bot.config import Config
 
 class AdminMiddleware(BaseMiddleware):
     def __init__(self, config: Config) -> None:
-        self._admin_id = config.admin_telegram_id
+        self._admin_ids = set(config.admin_telegram_ids)
 
     async def __call__(
         self,
@@ -15,7 +15,7 @@ class AdminMiddleware(BaseMiddleware):
         data: dict[str, Any],
     ) -> Any:
         user = data.get("event_from_user")
-        if user is None or user.id != self._admin_id:
+        if user is None or user.id not in self._admin_ids:
             if isinstance(event, CallbackQuery):
                 await event.answer("Access denied.", show_alert=True)
             elif isinstance(event, Message):

@@ -78,7 +78,7 @@ async def show_product_detail(callback: CallbackQuery, callback_data: NavCallbac
 
     if callback.from_user:
         uname = f"@{callback.from_user.username}" if callback.from_user.username else str(callback.from_user.id)
-        await notify_admin(callback.bot, config.admin_telegram_id, f"👁 {uname} viewed \"{product['name']}\"")
+        await notify_admin(callback.bot, config.admin_telegram_ids, f"👁 {uname} viewed \"{product['name']}\"")
 
     photo_id = product.get("photo_id")
     if photo_id:

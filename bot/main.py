@@ -53,14 +53,14 @@ async def main() -> None:
             bot, cryptopay,
             config.order_timeout_minutes,
             config.payment_check_interval,
-            config.admin_telegram_id,
+            config.admin_telegram_ids[0],
             bonus_usd=config.referral_bonus_usd,
         )
         await restore_deposit_monitors(
             bot, cryptopay,
             config.order_timeout_minutes,
             config.payment_check_interval,
-            admin_id=config.admin_telegram_id,
+            admin_id=config.admin_telegram_ids[0],
         )
         logging.info("Bot starting...")
         await dp.start_polling(bot)

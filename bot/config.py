@@ -8,7 +8,7 @@ load_dotenv()
 @dataclass
 class Config:
     telegram_token: str
-    admin_telegram_id: int
+    admin_telegram_ids: list[int]
     cryptobot_token: str
     referral_bonus_usd: float
     order_timeout_minutes: int
@@ -19,7 +19,7 @@ class Config:
 def load_config() -> Config:
     return Config(
         telegram_token=os.environ["TELEGRAM_BOT_TOKEN"],
-        admin_telegram_id=int(os.environ["ADMIN_TELEGRAM_ID"]),
+        admin_telegram_ids=[int(x.strip()) for x in os.environ["ADMIN_TELEGRAM_ID"].split(",")],
         cryptobot_token=os.environ["CRYPTOBOT_TOKEN"],
         referral_bonus_usd=float(os.getenv("REFERRAL_BONUS_USD", "10.0")),
         order_timeout_minutes=int(os.getenv("ORDER_TIMEOUT_MINUTES", "30")),
