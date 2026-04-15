@@ -21,11 +21,11 @@ async def show_referral(callback: CallbackQuery) -> None:
     link = f"t.me/{bot_me.username}?start=ref_{callback.from_user.id}"
     balance = user["balance"] if user else 0.0
     text = (
-        f"Your referral link:\n{link}\n\n"
-        f"Referrals made: {stats['count']}\n"
-        f"Bonus earned: ${stats['total_earned']:.2f}\n"
-        f"Your balance: ${balance:.2f}\n\n"
-        f"Both you and your friend get $10 after their first purchase."
+        f"🔗 Your referral link:\n{link}\n\n"
+        f"👥 Referrals: {stats['count']}\n"
+        f"💰 Bonus earned: ${stats['total_earned']:.2f}\n"
+        f"💵 Your balance: ${balance:.2f}\n\n"
+        f"🎁 Both you and your friend get $10 after their first purchase!"
     )
     await callback.message.edit_text(text, reply_markup=back_to_main_kb())
     await callback.answer()

@@ -8,9 +8,8 @@ load_dotenv()
 @dataclass
 class Config:
     telegram_token: str
-    bitunix_api_key: str
-    bitunix_secret_key: str
     admin_telegram_id: int
+    cryptobot_token: str
     referral_bonus_usd: float
     order_timeout_minutes: int
     payment_check_interval: int
@@ -20,9 +19,8 @@ class Config:
 def load_config() -> Config:
     return Config(
         telegram_token=os.environ["TELEGRAM_BOT_TOKEN"],
-        bitunix_api_key=os.environ["BITUNIX_API_KEY"],
-        bitunix_secret_key=os.environ["BITUNIX_SECRET_KEY"],
         admin_telegram_id=int(os.environ["ADMIN_TELEGRAM_ID"]),
+        cryptobot_token=os.environ["CRYPTOBOT_TOKEN"],
         referral_bonus_usd=float(os.getenv("REFERRAL_BONUS_USD", "10.0")),
         order_timeout_minutes=int(os.getenv("ORDER_TIMEOUT_MINUTES", "30")),
         payment_check_interval=int(os.getenv("PAYMENT_CHECK_INTERVAL_SECONDS", "30")),

@@ -66,6 +66,18 @@ CREATE TABLE IF NOT EXISTS referrals (
     created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
     UNIQUE(referrer_id, referred_id)
 );
+
+CREATE TABLE IF NOT EXISTS deposits (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    user_id INTEGER NOT NULL REFERENCES users(id),
+    amount_usd REAL NOT NULL,
+    amount_crypto REAL NOT NULL,
+    crypto_currency TEXT NOT NULL,
+    deposit_address TEXT NOT NULL,
+    status TEXT DEFAULT 'pending' CHECK(status IN ('pending','completed','expired','cancelled')),
+    created_at_ms INTEGER NOT NULL,
+    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+);
 """
 
 
@@ -77,6 +89,16 @@ async def connect(db_path: str) -> None:
     _db.row_factory = aiosqlite.Row
     await _db.executescript(SCHEMA)
     await _db.commit()
+    for sql in [
+        "ALTER TABLE orders ADD COLUMN invoice_id TEXT",
+        "ALTER TABLE deposits ADD COLUMN invoice_id TEXT",
+        "ALTER TABLE products ADD COLUMN photo_id TEXT",
+    ]:
+        try:
+            await _db.execute(sql)
+            await _db.commit()
+        except Exception:
+            pass
 
 
 async def close() -> None:
@@ -114,6 +136,16 @@ async def update_user_balance(user_id: int, delta: float) -> None:
         "UPDATE users SET balance = balance + ? WHERE id = ?", (delta, user_id)
     )
     await _db.commit()
+
+
+async def deduct_balance_if_sufficient(user_id: int, amount: float) -> bool:
+    """Atomically deduct balance only if sufficient funds. Returns True if deducted."""
+    result = await _db.execute(
+        "UPDATE users SET balance = balance - ? WHERE id = ? AND balance >= ?",
+        (amount, user_id, amount),
+    )
+    await _db.commit()
+    return result.rowcount > 0
 
 
 async def get_all_users() -> list[dict]:
@@ -245,7 +277,7 @@ async def add_product(cat_id: int, name: str, description: str, price_usd: float
 
 async def update_product_field(product_id: int, field: str, value: Any) -> None:
     # Mapping prevents SQL injection: only these exact column names can be used
-    _allowed_fields = {"name": "name", "description": "description", "price_usd": "price_usd"}
+    _allowed_fields = {"name": "name", "description": "description", "price_usd": "price_usd", "photo_id": "photo_id"}
     col = _allowed_fields.get(field)
     if col is None:
         raise ValueError(f"Cannot update field: {field}")
@@ -336,14 +368,15 @@ async def create_order(
     crypto_currency: str = "",
     deposit_address: str = "",
     created_at_ms: int = 0,
+    invoice_id: str = "",
 ) -> int:
     cur = await _db.execute(
         """INSERT INTO orders
            (user_id, product_id, email, generated_password, amount_usd,
-            balance_used, amount_crypto, crypto_currency, deposit_address, created_at_ms)
-           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+            balance_used, amount_crypto, crypto_currency, deposit_address, created_at_ms, invoice_id)
+           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
         (user_id, product_id, email, generated_password, amount_usd,
-         balance_used, amount_crypto, crypto_currency, deposit_address, created_at_ms),
+         balance_used, amount_crypto, crypto_currency, deposit_address, created_at_ms, invoice_id),
     )
     await _db.commit()
     return cur.lastrowid
@@ -413,11 +446,63 @@ async def get_orders_by_status(status: str) -> list[dict]:
         return _rows(await cur.fetchall())
 
 
+async def count_pending_orders(user_id: int) -> int:
+    async with _db.execute(
+        "SELECT COUNT(*) as cnt FROM orders WHERE user_id = ? AND status = 'pending'",
+        (user_id,),
+    ) as cur:
+        row = await cur.fetchone()
+        return row["cnt"]
+
+
 async def get_pending_orders() -> list[dict]:
     async with _db.execute(
         "SELECT * FROM orders WHERE status = 'pending'"
     ) as cur:
         return _rows(await cur.fetchall())
+
+
+async def create_deposit(
+    user_id: int,
+    amount_usd: float,
+    amount_crypto: float = 0.0,
+    crypto_currency: str = "",
+    deposit_address: str = "",
+    created_at_ms: int = 0,
+    invoice_id: str = "",
+) -> int:
+    cur = await _db.execute(
+        """INSERT INTO deposits
+           (user_id, amount_usd, amount_crypto, crypto_currency, deposit_address, created_at_ms, invoice_id)
+           VALUES (?, ?, ?, ?, ?, ?, ?)""",
+        (user_id, amount_usd, amount_crypto, crypto_currency, deposit_address, created_at_ms, invoice_id),
+    )
+    await _db.commit()
+    return cur.lastrowid
+
+
+async def get_deposit(deposit_id: int) -> dict | None:
+    async with _db.execute("SELECT * FROM deposits WHERE id = ?", (deposit_id,)) as cur:
+        return _row(await cur.fetchone())
+
+
+async def update_deposit_status(deposit_id: int, status: str) -> None:
+    await _db.execute("UPDATE deposits SET status = ? WHERE id = ?", (status, deposit_id))
+    await _db.commit()
+
+
+async def get_pending_deposits() -> list[dict]:
+    async with _db.execute("SELECT * FROM deposits WHERE status = 'pending'") as cur:
+        return _rows(await cur.fetchall())
+
+
+async def count_pending_deposits(user_id: int) -> int:
+    async with _db.execute(
+        "SELECT COUNT(*) as cnt FROM deposits WHERE user_id = ? AND status = 'pending'",
+        (user_id,),
+    ) as cur:
+        row = await cur.fetchone()
+        return row["cnt"]
 
 
 async def get_admin_stats() -> dict:

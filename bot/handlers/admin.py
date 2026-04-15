@@ -26,6 +26,7 @@ class AdminStates(StatesGroup):
     waiting_prod_description = State()
     waiting_prod_edit_value = State()
     waiting_stock_items = State()
+    waiting_prod_photo = State()
     waiting_broadcast_text = State()
     confirm_broadcast = State()
     waiting_balance_user_id = State()
@@ -294,6 +295,46 @@ async def receive_prod_edit_value(message: Message, state: FSMContext) -> None:
     prod = await db.get_product(data["prod_id"])
     await message.answer(
         "Updated.",
+        reply_markup=admin_prod_actions_kb(prod["id"], bool(prod["is_active"]), prod["type"]),
+    )
+
+
+@router.callback_query(AdminCallback.filter(F.action == "prod_photo"))
+async def admin_prod_photo(callback: CallbackQuery, callback_data: AdminCallback, state: FSMContext) -> None:
+    if not callback.message:
+        await callback.answer()
+        return
+    await state.set_state(AdminStates.waiting_prod_photo)
+    await state.update_data(prod_id=callback_data.id)
+    await callback.message.edit_text("📷 Send a photo for this product (or send 'remove' to delete current photo):")
+    await callback.answer()
+
+
+@router.message(AdminStates.waiting_prod_photo)
+async def receive_prod_photo(message: Message, state: FSMContext) -> None:
+    data = await state.get_data()
+    prod_id = data["prod_id"]
+
+    if message.text and message.text.strip().lower() == "remove":
+        await db.update_product_field(prod_id, "photo_id", "")
+        await state.clear()
+        prod = await db.get_product(prod_id)
+        await message.answer(
+            "📷 Photo removed.",
+            reply_markup=admin_prod_actions_kb(prod["id"], bool(prod["is_active"]), prod["type"]),
+        )
+        return
+
+    if not message.photo:
+        await message.answer("⚠️ Please send a photo, or type 'remove' to delete the current one.")
+        return
+
+    photo_id = message.photo[-1].file_id
+    await db.update_product_field(prod_id, "photo_id", photo_id)
+    await state.clear()
+    prod = await db.get_product(prod_id)
+    await message.answer(
+        "✅ Photo saved!",
         reply_markup=admin_prod_actions_kb(prod["id"], bool(prod["is_active"]), prod["type"]),
     )
 
