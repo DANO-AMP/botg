@@ -1,13 +1,13 @@
 """Lightweight aiohttp web server to receive MaxelPay webhook notifications.
 
-MaxelPay POSTs to our /webhook/maxelpay endpoint when a payment status changes.
-The webhook payload format is handled flexibly — we log the raw body and attempt
-to extract orderID + status. Adjust parsing if MaxelPay's actual format differs.
+MaxelPay POSTs to /webhook/maxelpay when a payment event occurs.
+Payload format: {"event": "payment.completed", "data": {"orderId": "...", ...}}
+Signature is verified via X-MaxelPay-Signature header (HMAC-SHA256).
 """
 
 import asyncio
-import logging
 import json
+import logging
 
 from aiohttp import web
 from aiogram import Bot
@@ -23,33 +23,9 @@ _bot: Bot | None = None
 _admin_id: int = 0
 _bonus_usd: float = 10.0
 
-
-def _try_parse_webhook(body: bytes) -> dict | None:
-    """Try to parse the webhook body. Handles plain JSON and encrypted payloads."""
-    text = body.decode("utf-8", errors="replace")
-
-    # Try plain JSON first
-    try:
-        data = json.loads(text)
-        if isinstance(data, dict):
-            # If payload is wrapped in a "data" field (encrypted), try to decrypt
-            if "data" in data and len(data) == 1 and _maxelpay_client:
-                try:
-                    return _maxelpay_client._decrypt(data["data"])
-                except Exception:
-                    pass
-            return data
-    except json.JSONDecodeError:
-        pass
-
-    # Try as raw encrypted base64 string
-    if _maxelpay_client:
-        try:
-            return _maxelpay_client._decrypt(text.strip())
-        except Exception:
-            pass
-
-    return None
+# Webhook events
+_PAID_EVENTS = {"payment.completed", "payment.overpaid"}
+_EXPIRED_EVENTS = {"payment.expired"}
 
 
 async def _handle_maxelpay_webhook(request: web.Request) -> web.Response:
@@ -57,36 +33,47 @@ async def _handle_maxelpay_webhook(request: web.Request) -> web.Response:
     body = await request.read()
     logger.info("MaxelPay webhook received: %s", body[:500])
 
-    data = _try_parse_webhook(body)
-    if data is None:
-        logger.error("Could not parse MaxelPay webhook payload")
-        return web.json_response({"status": "error", "message": "invalid payload"}, status=400)
+    # Verify signature if secret key is configured
+    signature = request.headers.get("X-MaxelPay-Signature", "")
+    if _maxelpay_client and _maxelpay_client._secret_key:
+        if not signature:
+            logger.warning("Webhook missing X-MaxelPay-Signature header")
+        elif not _maxelpay_client.verify_webhook_signature(body, signature):
+            logger.warning("Webhook signature verification failed")
+            return web.json_response({"status": "error", "message": "invalid signature"}, status=401)
 
-    logger.info("MaxelPay webhook parsed: %s", data)
+    try:
+        payload = json.loads(body)
+    except json.JSONDecodeError:
+        logger.error("Could not parse MaxelPay webhook JSON")
+        return web.json_response({"status": "error", "message": "invalid json"}, status=400)
 
-    order_id_raw = data.get("orderID") or data.get("order_id") or data.get("orderId") or ""
-    status = (
-        data.get("status") or data.get("payment_status") or data.get("paymentStatus") or ""
-    ).lower()
+    logger.info("MaxelPay webhook parsed: %s", payload)
+
+    event = payload.get("event", "")
+    data = payload.get("data", payload)  # fallback to root if no "data" key
+
+    order_id_raw = (
+        data.get("orderId") or data.get("order_id") or data.get("orderID") or ""
+    )
 
     if not order_id_raw:
-        logger.warning("Webhook missing orderID: %s", data)
+        logger.warning("Webhook missing orderId: %s", payload)
         return web.json_response({"status": "ok"})
 
     order_id_str = str(order_id_raw)
 
-    # Route to order or deposit handler based on our ID prefix convention
     if order_id_str.startswith("order_"):
-        await _process_order_webhook(order_id_str, status, data)
+        await _process_order_webhook(order_id_str, event, data)
     elif order_id_str.startswith("deposit_"):
-        await _process_deposit_webhook(order_id_str, status, data)
+        await _process_deposit_webhook(order_id_str, event, data)
     else:
-        logger.warning("Unknown orderID prefix: %s", order_id_str)
+        logger.warning("Unknown orderId prefix: %s", order_id_str)
 
     return web.json_response({"status": "ok"})
 
 
-async def _process_order_webhook(order_id_str: str, status: str, data: dict) -> None:
+async def _process_order_webhook(order_id_str: str, event: str, data: dict) -> None:
     """Process a webhook for a purchase order."""
     try:
         db_order_id = int(order_id_str.replace("order_", ""))
@@ -103,29 +90,27 @@ async def _process_order_webhook(order_id_str: str, status: str, data: dict) -> 
         logger.info("Order %s already %s, ignoring webhook", db_order_id, order["status"])
         return
 
-    is_paid = status in ("completed", "paid", "success", "confirmed", "approved")
-    is_expired = status in ("expired", "failed", "cancelled", "rejected")
-
-    if is_paid and _bot:
-        # Cancel the expiry timer if active
+    if event in _PAID_EVENTS and _bot:
         _cancel_expiry(order_id_str)
         await deliver_and_notify(db_order_id, order, _bot, _admin_id, _bonus_usd)
-    elif is_expired and _bot:
+    elif event in _EXPIRED_EVENTS and _bot:
         _cancel_expiry(order_id_str)
         await db.update_order_status(db_order_id, "expired")
+        if order.get("balance_used", 0.0) > 0:
+            await db.update_user_balance(order["user_id"], order["balance_used"])
         try:
             await _bot.send_message(
                 order["user_id"],
-                "⌛ Your order has expired (payment not completed).\n"
+                "Your order has expired (payment not completed).\n"
                 "Start a new order if you still want to purchase.",
             )
         except Exception:
             logger.warning("Failed to notify user about order %s expiry", db_order_id)
     else:
-        logger.info("Order %s webhook status '%s' — no action taken", db_order_id, status)
+        logger.info("Order %s webhook event '%s' — no action taken", db_order_id, event)
 
 
-async def _process_deposit_webhook(order_id_str: str, status: str, data: dict) -> None:
+async def _process_deposit_webhook(order_id_str: str, event: str, data: dict) -> None:
     """Process a webhook for a balance deposit."""
     try:
         deposit_id = int(order_id_str.replace("deposit_", ""))
@@ -142,10 +127,7 @@ async def _process_deposit_webhook(order_id_str: str, status: str, data: dict) -
         logger.info("Deposit %s already %s, ignoring webhook", deposit_id, deposit["status"])
         return
 
-    is_paid = status in ("completed", "paid", "success", "confirmed", "approved")
-    is_expired = status in ("expired", "failed", "cancelled", "rejected")
-
-    if is_paid and _bot:
+    if event in _PAID_EVENTS and _bot:
         _cancel_expiry(order_id_str)
         await db.update_deposit_status(deposit_id, "completed")
         await db.update_user_balance(deposit["user_id"], deposit["amount_usd"])
@@ -153,31 +135,33 @@ async def _process_deposit_webhook(order_id_str: str, status: str, data: dict) -
             try:
                 await _bot.send_message(
                     _admin_id,
-                    f"✅ Deposit #{deposit_id} confirmed\n"
-                    f"👤 User: {deposit['user_id']}\n"
-                    f"💰 ${deposit['amount_usd']:.2f}",
+                    f"Deposit #{deposit_id} confirmed\n"
+                    f"User: {deposit['user_id']}\n"
+                    f"${deposit['amount_usd']:.2f}",
                 )
             except Exception:
                 pass
         try:
             await _bot.send_message(
                 deposit["user_id"],
-                f"✅ Deposit confirmed!\n\n"
-                f"💰 ${deposit['amount_usd']:.2f} has been added to your balance.",
+                f"Deposit confirmed!\n\n"
+                f"${deposit['amount_usd']:.2f} has been added to your balance.",
             )
         except Exception:
             logger.warning("Failed to notify user %s about deposit %s", deposit["user_id"], deposit_id)
-    elif is_expired and _bot:
+    elif event in _EXPIRED_EVENTS and _bot:
         _cancel_expiry(order_id_str)
         await db.update_deposit_status(deposit_id, "expired")
         try:
             await _bot.send_message(
                 deposit["user_id"],
-                "⌛ Deposit expired (payment not completed).\n"
+                "Deposit expired (payment not completed).\n"
                 "Start a new deposit if you wish to top up your balance.",
             )
         except Exception:
             logger.warning("Failed to notify user %s about deposit expiry", deposit["user_id"])
+    else:
+        logger.info("Deposit %s webhook event '%s' — no action taken", deposit_id, event)
 
 
 # --- Expiry timers ---
@@ -186,7 +170,7 @@ _expiry_tasks: dict[str, asyncio.Task] = {}
 
 
 async def _expiry_timer(key: str, timeout_minutes: float) -> None:
-    """Wait for timeout and then expire the order/deposit if still pending."""
+    """Wait for timeout and expire the order/deposit if still pending."""
     await asyncio.sleep(timeout_minutes * 60)
 
     if key.startswith("order_"):
@@ -203,7 +187,7 @@ async def _expiry_timer(key: str, timeout_minutes: float) -> None:
                 try:
                     await _bot.send_message(
                         order["user_id"],
-                        "⌛ Your order has expired (no payment received in time).\n"
+                        "Your order has expired (no payment received in time).\n"
                         "Start a new order if you still want to purchase.",
                     )
                 except Exception:
@@ -220,7 +204,7 @@ async def _expiry_timer(key: str, timeout_minutes: float) -> None:
                 try:
                     await _bot.send_message(
                         deposit["user_id"],
-                        "⌛ Deposit expired (no payment received in time).\n"
+                        "Deposit expired (no payment received in time).\n"
                         "Start a new deposit if you wish to top up your balance.",
                     )
                 except Exception:
@@ -293,7 +277,6 @@ async def start_webhook_server(
 
     app = web.Application()
     app.router.add_post("/webhook/maxelpay", _handle_maxelpay_webhook)
-    # Simple health check
     app.router.add_get("/health", lambda r: web.json_response({"status": "ok"}))
 
     _runner = web.AppRunner(app)

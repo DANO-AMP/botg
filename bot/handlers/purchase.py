@@ -159,7 +159,6 @@ async def _check_balance_and_process(
         checkout = await maxelpay.create_checkout(
             order_id=maxelpay_order_id,
             amount=remaining,
-            user_name=str(user_id),
             user_email=email or "",
         )
     except Exception:

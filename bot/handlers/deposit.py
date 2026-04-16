@@ -72,8 +72,6 @@ async def receive_deposit_amount(
         checkout = await maxelpay.create_checkout(
             order_id=maxelpay_order_id,
             amount=amount,
-            user_name=str(message.from_user.id),
-            user_email="",
         )
     except Exception:
         await db.update_deposit_status(deposit_id, "cancelled")

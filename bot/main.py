@@ -30,7 +30,6 @@ async def main() -> None:
         api_key=config.maxelpay_api_key,
         secret_key=config.maxelpay_secret_key,
         webhook_base_url=config.webhook_base_url,
-        mode=config.maxelpay_mode,
     )
 
     dp["config"] = config
