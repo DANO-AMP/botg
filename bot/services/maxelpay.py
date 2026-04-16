@@ -61,19 +61,16 @@ class MaxelPayClient:
             headers=self._headers(),
             json=payload,
         ) as resp:
-            if resp.status != 200:
+            if resp.status not in (200, 201):
                 body = await resp.text()
                 raise ValueError(f"MaxelPay API error ({resp.status}): {body}")
-            data = await resp.json()
+            response = await resp.json()
 
-        payment_url = (
-            data.get("checkoutUrl")
-            or data.get("paymentUrl")
-            or data.get("url")
-            or data.get("result")
-        )
+        # Response format: {"success": true, "data": {"paymentUrl": "...", "sessionId": "...", ...}}
+        data = response.get("data", response)
+        payment_url = data.get("paymentUrl") or data.get("checkoutUrl") or data.get("url")
         if not payment_url:
-            raise ValueError(f"MaxelPay returned no payment URL: {data}")
+            raise ValueError(f"MaxelPay returned no payment URL: {response}")
 
         session_id = data.get("sessionId") or data.get("id") or ""
 

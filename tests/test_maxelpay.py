@@ -46,10 +46,16 @@ async def test_create_checkout_success(mocker):
     client = MaxelPayClient("apikey", "mysecretkey", "http://localhost:8080")
 
     mock_resp = mocker.MagicMock()
-    mock_resp.status = 200
+    mock_resp.status = 201  # MaxelPay returns 201 Created
     mock_resp.json = mocker.AsyncMock(return_value={
-        "checkoutUrl": "https://pay.maxelpay.com/checkout/abc123",
-        "sessionId": "ps_abc123",
+        "success": True,
+        "message": "Payment session created successfully",
+        "data": {
+            "sessionId": "ps_abc123",
+            "paymentUrl": "https://dashboard.maxelpay.com/pay/session/ps_abc123",
+            "orderId": "order_1",
+            "status": "pending",
+        },
     })
     mock_resp.__aenter__ = mocker.AsyncMock(return_value=mock_resp)
     mock_resp.__aexit__ = mocker.AsyncMock(return_value=False)
@@ -60,7 +66,7 @@ async def test_create_checkout_success(mocker):
 
     result = await client.create_checkout(order_id="order_1", amount=10.0)
 
-    assert result["payment_url"] == "https://pay.maxelpay.com/checkout/abc123"
+    assert result["payment_url"] == "https://dashboard.maxelpay.com/pay/session/ps_abc123"
     assert result["session_id"] == "ps_abc123"
     assert result["order_id"] == "order_1"
 
@@ -72,8 +78,8 @@ async def test_create_checkout_sends_correct_fields(mocker):
     captured_payload = {}
 
     mock_resp = mocker.MagicMock()
-    mock_resp.status = 200
-    mock_resp.json = mocker.AsyncMock(return_value={"checkoutUrl": "https://pay.maxelpay.com/x"})
+    mock_resp.status = 201
+    mock_resp.json = mocker.AsyncMock(return_value={"data": {"paymentUrl": "https://pay.maxelpay.com/x"}})
     mock_resp.__aenter__ = mocker.AsyncMock(return_value=mock_resp)
     mock_resp.__aexit__ = mocker.AsyncMock(return_value=False)
 
@@ -103,8 +109,8 @@ async def test_create_checkout_uses_x_api_key_header(mocker):
     captured_headers = {}
 
     mock_resp = mocker.MagicMock()
-    mock_resp.status = 200
-    mock_resp.json = mocker.AsyncMock(return_value={"checkoutUrl": "https://pay.maxelpay.com/x"})
+    mock_resp.status = 201
+    mock_resp.json = mocker.AsyncMock(return_value={"data": {"paymentUrl": "https://pay.maxelpay.com/x"}})
     mock_resp.__aenter__ = mocker.AsyncMock(return_value=mock_resp)
     mock_resp.__aexit__ = mocker.AsyncMock(return_value=False)
 
