@@ -25,6 +25,15 @@ async def deliver_and_notify(
             f"⚠️ Save these credentials now!"
         )
         admin_extra = f"\nEmail: {order.get('email') or '—'}\nPassword: {delivered_value}"
+    elif product["type"] == "unlimited":
+        delivered_value = product.get("fixed_value") or ""
+        user_text = (
+            f"✅ Payment confirmed!\n\n"
+            f"📦 Product: {product['name']}\n"
+            f"🔑 Your item:\n{delivered_value}\n\n"
+            f"⚠️ Keep this safe!"
+        )
+        admin_extra = f"\nDelivered: {delivered_value}"
     else:
         stock_item = await db.claim_stock_item(order["product_id"], order["user_id"])
         if not stock_item:

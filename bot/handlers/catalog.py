@@ -70,6 +70,8 @@ async def show_product_detail(callback: CallbackQuery, callback_data: NavCallbac
         stock_line = f"📦 In stock: {counts['available']}"
         if counts["available"] == 0:
             stock_line = "🔴 Out of stock"
+    elif product["type"] == "unlimited":
+        stock_line = "♾️ Unlimited"
     else:
         stock_line = "🟢 Available"
     desc = product["description"] or ""

@@ -27,8 +27,10 @@ CREATE TABLE IF NOT EXISTS products (
     name TEXT NOT NULL,
     description TEXT DEFAULT '',
     price_usd REAL NOT NULL,
-    type TEXT NOT NULL CHECK(type IN ('account', 'string')),
-    is_active INTEGER DEFAULT 1
+    type TEXT NOT NULL CHECK(type IN ('account', 'string', 'unlimited')),
+    is_active INTEGER DEFAULT 1,
+    photo_id TEXT DEFAULT '',
+    fixed_value TEXT DEFAULT ''
 );
 
 CREATE TABLE IF NOT EXISTS stock_items (
@@ -89,14 +91,33 @@ async def connect(db_path: str) -> None:
     _db.row_factory = aiosqlite.Row
     await _db.executescript(SCHEMA)
     await _db.commit()
-    for sql in [
-        "ALTER TABLE products ADD COLUMN photo_id TEXT",
-    ]:
-        try:
-            await _db.execute(sql)
-            await _db.commit()
-        except Exception:
-            pass
+
+    # Migrate existing products table to support 'unlimited' type and fixed_value column
+    async with _db.execute(
+        "SELECT sql FROM sqlite_master WHERE type='table' AND name='products'"
+    ) as cur:
+        row = await cur.fetchone()
+    if row and row[0] and 'unlimited' not in row[0]:
+        await _db.executescript("""
+            CREATE TABLE products_new (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                category_id INTEGER NOT NULL REFERENCES categories(id),
+                name TEXT NOT NULL,
+                description TEXT DEFAULT '',
+                price_usd REAL NOT NULL,
+                type TEXT NOT NULL CHECK(type IN ('account', 'string', 'unlimited')),
+                is_active INTEGER DEFAULT 1,
+                photo_id TEXT DEFAULT '',
+                fixed_value TEXT DEFAULT ''
+            );
+            INSERT INTO products_new
+                SELECT id, category_id, name, description, price_usd, type, is_active,
+                       COALESCE(photo_id, ''), ''
+                FROM products;
+            DROP TABLE products;
+            ALTER TABLE products_new RENAME TO products;
+        """)
+        await _db.commit()
 
 
 async def close() -> None:
@@ -264,10 +285,13 @@ async def get_product(product_id: int) -> dict | None:
         return _row(await cur.fetchone())
 
 
-async def add_product(cat_id: int, name: str, description: str, price_usd: float, type_: str) -> int:
+async def add_product(
+    cat_id: int, name: str, description: str, price_usd: float, type_: str,
+    fixed_value: str = "",
+) -> int:
     cur = await _db.execute(
-        "INSERT INTO products (category_id, name, description, price_usd, type) VALUES (?, ?, ?, ?, ?)",
-        (cat_id, name, description, price_usd, type_),
+        "INSERT INTO products (category_id, name, description, price_usd, type, fixed_value) VALUES (?, ?, ?, ?, ?, ?)",
+        (cat_id, name, description, price_usd, type_, fixed_value),
     )
     await _db.commit()
     return cur.lastrowid
@@ -275,7 +299,10 @@ async def add_product(cat_id: int, name: str, description: str, price_usd: float
 
 async def update_product_field(product_id: int, field: str, value: Any) -> None:
     # Mapping prevents SQL injection: only these exact column names can be used
-    _allowed_fields = {"name": "name", "description": "description", "price_usd": "price_usd", "photo_id": "photo_id"}
+    _allowed_fields = {
+        "name": "name", "description": "description", "price_usd": "price_usd",
+        "photo_id": "photo_id", "fixed_value": "fixed_value",
+    }
     col = _allowed_fields.get(field)
     if col is None:
         raise ValueError(f"Cannot update field: {field}")

@@ -194,6 +194,8 @@ def admin_prod_actions_kb(prod_id: int, is_active: bool, prod_type: str) -> Inli
     )
     if prod_type == "string":
         b.row(InlineKeyboardButton(text="📦 Stock", callback_data=AdminCallback(action="prod_stock", id=prod_id).pack()))
+    if prod_type == "unlimited":
+        b.row(InlineKeyboardButton(text="♾️ Fixed Value", callback_data=AdminCallback(action="prod_edit", id=prod_id, field="fixed_value").pack()))
     b.row(InlineKeyboardButton(text="◀️ Back", callback_data=AdminCallback(action="prods_cat").pack()))
     return b.as_markup()
 
@@ -224,6 +226,9 @@ def prod_type_kb(cat_id: int) -> InlineKeyboardMarkup:
     b.row(
         InlineKeyboardButton(text="👤 Account", callback_data=AdminCallback(action="prod_type_account", id=cat_id).pack()),
         InlineKeyboardButton(text="🔑 String/Key", callback_data=AdminCallback(action="prod_type_string", id=cat_id).pack()),
+    )
+    b.row(
+        InlineKeyboardButton(text="♾️ Unlimited", callback_data=AdminCallback(action="prod_type_unlimited", id=cat_id).pack()),
     )
     b.row(InlineKeyboardButton(text="❌ Cancel", callback_data=AdminCallback(action="menu").pack()))
     return b.as_markup()

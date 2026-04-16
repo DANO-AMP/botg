@@ -48,11 +48,12 @@ async def buy_start(
     if not product or not product["is_active"]:
         await callback.answer("Product not available.", show_alert=True)
         return
-    if product["type"] == "string":
-        counts = await db.get_stock_count(product["id"])
-        if counts["available"] == 0:
-            await callback.answer("Out of stock.", show_alert=True)
-            return
+    if product["type"] in ("string", "unlimited"):
+        if product["type"] == "string":
+            counts = await db.get_stock_count(product["id"])
+            if counts["available"] == 0:
+                await callback.answer("Out of stock.", show_alert=True)
+                return
         await state.clear()
         await callback.answer()
 

@@ -24,6 +24,7 @@ class AdminStates(StatesGroup):
     waiting_prod_name = State()
     waiting_prod_price = State()
     waiting_prod_description = State()
+    waiting_prod_fixed_value = State()
     waiting_prod_edit_value = State()
     waiting_stock_items = State()
     waiting_prod_photo = State()
@@ -201,14 +202,15 @@ async def admin_prod_add(callback: CallbackQuery, callback_data: AdminCallback) 
     await callback.answer()
 
 
-@router.callback_query(AdminCallback.filter(F.action.in_({"prod_type_account", "prod_type_string"})))
+@router.callback_query(AdminCallback.filter(F.action.in_({"prod_type_account", "prod_type_string", "prod_type_unlimited"})))
 async def admin_prod_type_selected(
     callback: CallbackQuery, callback_data: AdminCallback, state: FSMContext
 ) -> None:
     if not callback.message:
         await callback.answer()
         return
-    prod_type = "account" if callback_data.action == "prod_type_account" else "string"
+    type_map = {"prod_type_account": "account", "prod_type_string": "string", "prod_type_unlimited": "unlimited"}
+    prod_type = type_map[callback_data.action]
     await state.set_state(AdminStates.waiting_prod_name)
     await state.update_data(cat_id=callback_data.id, prod_type=prod_type)
     await callback.message.edit_text("Enter product name:")
@@ -244,6 +246,11 @@ async def receive_prod_price(message: Message, state: FSMContext) -> None:
 async def receive_prod_description(message: Message, state: FSMContext) -> None:
     desc = "" if (message.text or "").strip() == "-" else (message.text or "").strip()
     data = await state.get_data()
+    if data["prod_type"] == "unlimited":
+        await state.update_data(prod_description=desc)
+        await state.set_state(AdminStates.waiting_prod_fixed_value)
+        await message.answer("Enter the fixed value to deliver to every buyer (e.g. a link, key, or text):")
+        return
     prod_id = await db.add_product(
         data["cat_id"], data["prod_name"], desc, data["prod_price"], data["prod_type"]
     )
@@ -251,6 +258,25 @@ async def receive_prod_description(message: Message, state: FSMContext) -> None:
     products = await db.get_products_by_category(data["cat_id"], active_only=False)
     await message.answer(
         f"Product '{data['prod_name']}' created (ID: {prod_id}).",
+        reply_markup=admin_products_kb(products, data["cat_id"]),
+    )
+
+
+@router.message(AdminStates.waiting_prod_fixed_value)
+async def receive_prod_fixed_value(message: Message, state: FSMContext) -> None:
+    fixed_value = (message.text or "").strip()
+    if not fixed_value:
+        await message.answer("Value cannot be empty. Enter the fixed value:")
+        return
+    data = await state.get_data()
+    prod_id = await db.add_product(
+        data["cat_id"], data["prod_name"], data["prod_description"],
+        data["prod_price"], data["prod_type"], fixed_value=fixed_value,
+    )
+    await state.clear()
+    products = await db.get_products_by_category(data["cat_id"], active_only=False)
+    await message.answer(
+        f"Unlimited product '{data['prod_name']}' created (ID: {prod_id}).",
         reply_markup=admin_products_kb(products, data["cat_id"]),
     )
 
@@ -264,12 +290,15 @@ async def admin_prod_view(callback: CallbackQuery, callback_data: AdminCallback)
     if not prod:
         await callback.answer("Not found.", show_alert=True)
         return
-    stock_info = ""
+    extra_info = ""
     if prod["type"] == "string":
         counts = await db.get_stock_count(prod["id"])
-        stock_info = f"\nStock: {counts['available']}/{counts['total']}"
+        extra_info = f"\nStock: {counts['available']}/{counts['total']}"
+    elif prod["type"] == "unlimited":
+        fv = prod.get("fixed_value") or "(not set)"
+        extra_info = f"\nFixed value: {fv}"
     await callback.message.edit_text(
-        f"{prod['name']}\nPrice: ${prod['price_usd']:.2f}\nType: {prod['type']}{stock_info}\n{prod['description'] or ''}",
+        f"{prod['name']}\nPrice: ${prod['price_usd']:.2f}\nType: {prod['type']}{extra_info}\n{prod['description'] or ''}",
         reply_markup=admin_prod_actions_kb(prod["id"], bool(prod["is_active"]), prod["type"]),
     )
     await callback.answer()
