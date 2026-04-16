@@ -58,7 +58,7 @@ async def main() -> None:
         await start_webhook_server(
             bot, maxelpay,
             port=config.webhook_port,
-            admin_id=config.admin_telegram_ids[0],
+            admin_ids=config.notification_targets,
             bonus_usd=config.referral_bonus_usd,
         )
         await restore_expiry_timers(config.order_timeout_minutes)

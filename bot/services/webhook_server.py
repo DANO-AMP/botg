@@ -20,7 +20,7 @@ logger = logging.getLogger(__name__)
 _runner: web.AppRunner | None = None
 _maxelpay_client = None  # set at startup
 _bot: Bot | None = None
-_admin_id: int = 0
+_admin_ids: list[int] = []
 _bonus_usd: float = 10.0
 
 # Webhook events
@@ -92,7 +92,7 @@ async def _process_order_webhook(order_id_str: str, event: str, data: dict) -> N
 
     if event in _PAID_EVENTS and _bot:
         _cancel_expiry(order_id_str)
-        await deliver_and_notify(db_order_id, order, _bot, _admin_id, _bonus_usd)
+        await deliver_and_notify(db_order_id, order, _bot, _admin_ids, _bonus_usd)
     elif event in _EXPIRED_EVENTS and _bot:
         _cancel_expiry(order_id_str)
         await db.update_order_status(db_order_id, "expired")
@@ -131,10 +131,10 @@ async def _process_deposit_webhook(order_id_str: str, event: str, data: dict) ->
         _cancel_expiry(order_id_str)
         await db.update_deposit_status(deposit_id, "completed")
         await db.update_user_balance(deposit["user_id"], deposit["amount_usd"])
-        if _admin_id:
+        if _admin_ids:
             try:
                 await _bot.send_message(
-                    _admin_id,
+                    _admin_ids[0],
                     f"Deposit #{deposit_id} confirmed\n"
                     f"User: {deposit['user_id']}\n"
                     f"${deposit['amount_usd']:.2f}",
@@ -264,15 +264,15 @@ async def start_webhook_server(
     bot: Bot,
     maxelpay_client,
     port: int,
-    admin_id: int,
+    admin_ids: list[int],
     bonus_usd: float = 10.0,
 ) -> None:
     """Start the aiohttp webhook server."""
-    global _runner, _maxelpay_client, _bot, _admin_id, _bonus_usd
+    global _runner, _maxelpay_client, _bot, _admin_ids, _bonus_usd
 
     _maxelpay_client = maxelpay_client
     _bot = bot
-    _admin_id = admin_id
+    _admin_ids = list(admin_ids)
     _bonus_usd = bonus_usd
 
     app = web.Application()

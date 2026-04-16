@@ -89,7 +89,7 @@ async def receive_deposit_amount(
         f"Tap 💳 Pay Now to complete payment.\n"
         f"⏱ You have {config.order_timeout_minutes} minutes."
     )
-    await notify_admin(message.bot, config.admin_telegram_ids,
+    await notify_admin(message.bot, config.notification_targets,
         f"💎 New deposit #{deposit_id}\n👤 User: {message.from_user.id}\n💲 ${amount:.2f}")
 
     await message.answer(reply_text, reply_markup=deposit_pending_kb(deposit_id, checkout["payment_url"]))
@@ -131,7 +131,7 @@ async def cancel_deposit(callback: CallbackQuery, callback_data: DepositCallback
     from bot.services.webhook_server import _cancel_expiry
     _cancel_expiry(f"deposit_{callback_data.id}")
     await db.update_deposit_status(callback_data.id, "cancelled")
-    await notify_admin(callback.bot, config.admin_telegram_ids,
+    await notify_admin(callback.bot, config.notification_targets,
         f"❌ Deposit #{callback_data.id} cancelled by user {callback.from_user.id}")
     await callback.message.edit_text("❌ Deposit cancelled.", reply_markup=back_to_main_kb())
     await callback.answer()

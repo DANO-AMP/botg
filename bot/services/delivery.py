@@ -6,8 +6,10 @@ logger = logging.getLogger(__name__)
 
 
 async def deliver_and_notify(
-    order_id: int, order: dict, bot: Bot, admin_id: int, bonus_usd: float = 10.0
+    order_id: int, order: dict, bot: Bot, admin_ids: int | list[int], bonus_usd: float = 10.0
 ) -> None:
+    if isinstance(admin_ids, int):
+        admin_ids = [admin_ids]
     product = await db.get_product(order["product_id"])
     if product is None:
         logger.error("Product not found for order %s", order_id)
@@ -58,14 +60,15 @@ async def deliver_and_notify(
     except Exception:
         logger.warning("Failed to notify user %s about delivery", order["user_id"])
 
-    try:
-        await bot.send_message(
-            admin_id,
-            f"Order #{order_id} DELIVERED\n"
-            f"User: {order['user_id']}\n"
-            f"Product: {product['name']}\n"
-            f"Amount: ${order['amount_usd']:.2f}"
-            f"{admin_extra}",
-        )
-    except Exception:
-        logger.warning("Failed to notify admin about order %s delivery", order_id)
+    msg = (
+        f"Order #{order_id} DELIVERED\n"
+        f"User: {order['user_id']}\n"
+        f"Product: {product['name']}\n"
+        f"Amount: ${order['amount_usd']:.2f}"
+        f"{admin_extra}"
+    )
+    for aid in admin_ids:
+        try:
+            await bot.send_message(aid, msg)
+        except Exception:
+            logger.warning("Failed to notify admin %s about order %s delivery", aid, order_id)

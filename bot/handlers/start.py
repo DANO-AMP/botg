@@ -44,7 +44,7 @@ async def cmd_start(message: Message, state: FSMContext, config: Config) -> None
     if is_new:
         uname = f"@{message.from_user.username}" if message.from_user.username else str(message.from_user.id)
         ref_text = f" (via referral from {referred_by})" if referred_by else ""
-        await notify_admin(message.bot, config.admin_telegram_ids, f"👤 New user: {uname}{ref_text}")
+        await notify_admin(message.bot, config.notification_targets, f"👤 New user: {uname}{ref_text}")
 
     await message.answer(WELCOME, reply_markup=main_menu_kb())
 
