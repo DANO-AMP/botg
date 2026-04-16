@@ -17,13 +17,14 @@ async def deliver_and_notify(
 
     if product["type"] == "account":
         delivered_value = order["generated_password"]
+        email_line = f"📧 Email: {order['email']}\n" if order.get("email") else ""
         user_text = (
             f"✅ Payment confirmed!\n\n"
-            f"📧 Email: {order['email']}\n"
+            f"{email_line}"
             f"🔑 Password: {delivered_value}\n\n"
             f"⚠️ Save these credentials now!"
         )
-        admin_extra = f"\nEmail: {order['email']}\nPassword: {delivered_value}"
+        admin_extra = f"\nEmail: {order.get('email') or '—'}\nPassword: {delivered_value}"
     else:
         stock_item = await db.claim_stock_item(order["product_id"], order["user_id"])
         if not stock_item:

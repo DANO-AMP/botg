@@ -67,7 +67,8 @@ async def buy_start(
         await state.set_state(PurchaseStates.waiting_email)
         await state.update_data(product_id=product["id"])
         await callback.message.edit_text(
-            f"🛒 Buying: {product['name']} — ${product['price_usd']:.2f}\n\n📧 Please enter your email address:"
+            f"🛒 Buying: {product['name']} — ${product['price_usd']:.2f}\n\n"
+            f"📧 Enter your email address, or send - to skip:"
         )
         await callback.answer()
 
@@ -81,9 +82,13 @@ async def receive_email(
 ) -> None:
     if not message.from_user:
         return
-    email = message.text.strip() if message.text else ""
-    if "@" not in email or "." not in email:
-        await message.answer("Invalid email. Please enter a valid email address:")
+    raw = message.text.strip() if message.text else ""
+    if raw == "-":
+        email = ""
+    elif "@" in raw and "." in raw:
+        email = raw
+    else:
+        await message.answer("Invalid email. Enter a valid email address or - to skip:")
         return
     data = await state.get_data()
     product_id = data["product_id"]
