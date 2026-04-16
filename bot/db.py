@@ -139,7 +139,7 @@ async def update_user_balance(user_id: int, delta: float) -> None:
 async def deduct_balance_if_sufficient(user_id: int, amount: float) -> bool:
     """Atomically deduct balance only if sufficient funds. Returns True if deducted."""
     result = await _db.execute(
-        "UPDATE users SET balance = balance - ? WHERE id = ? AND balance >= ?",
+        "UPDATE users SET balance = balance - ? WHERE id = ? AND balance >= ? - 0.0001",
         (amount, user_id, amount),
     )
     await _db.commit()

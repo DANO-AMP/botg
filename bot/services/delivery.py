@@ -54,7 +54,7 @@ async def deliver_and_notify(
         order["user_id"], bonus_usd=bonus_usd
     )
     if bonus_applied:
-        user_text += "\n\n🎁 You received a $10 referral bonus!"
+        user_text += f"\n\n🎁 You received a ${bonus_usd:.2f} referral bonus!"
 
     try:
         await bot.send_message(order["user_id"], user_text)

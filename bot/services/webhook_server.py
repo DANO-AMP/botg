@@ -38,6 +38,7 @@ async def _handle_maxelpay_webhook(request: web.Request) -> web.Response:
     if _maxelpay_client and _maxelpay_client._secret_key:
         if not signature:
             logger.warning("Webhook missing X-MaxelPay-Signature header")
+            return web.json_response({"status": "error", "message": "missing signature"}, status=401)
         elif not _maxelpay_client.verify_webhook_signature(body, signature):
             logger.warning("Webhook signature verification failed")
             return web.json_response({"status": "error", "message": "invalid signature"}, status=401)

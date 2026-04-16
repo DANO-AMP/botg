@@ -90,15 +90,13 @@ async def test_valid_signature_accepted(mock_bot):
 
 
 @pytest.mark.asyncio
-async def test_missing_signature_logs_warning_but_processes(mock_bot):
-    """If no signature header is sent, we warn but don't reject (for easier testing)."""
-    body = _payload("payment.expired", "order_99")
+async def test_missing_signature_returns_401(mock_bot):
+    """If X-MaxelPay-Signature header is absent, reject with 401."""
+    body = _payload("payment.completed", "order_1")
 
-    with patch("bot.services.webhook_server.db") as mock_db:
-        mock_db.get_order = AsyncMock(return_value=None)
-        async with TestClient(TestServer(_make_app())) as client:
-            status = await _post(client, body, signature=None)
-    assert status == 200
+    async with TestClient(TestServer(_make_app())) as client:
+        status = await _post(client, body, signature=None)
+    assert status == 401
 
 
 # ── order payment.completed ───────────────────────────────────────────────────
