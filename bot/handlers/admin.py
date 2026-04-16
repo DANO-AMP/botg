@@ -10,7 +10,7 @@ from aiogram.utils.keyboard import InlineKeyboardBuilder
 from bot import db
 from bot.keyboards.inline import (
     AdminCallback, admin_menu_kb, admin_categories_kb, admin_cat_actions_kb,
-    admin_products_kb, admin_prod_actions_kb, prod_type_kb,
+    admin_products_kb, admin_prod_actions_kb, admin_prod_cats_kb, prod_type_kb,
     confirm_delete_kb, back_to_main_kb,
     admin_stock_cats_kb, admin_stock_prods_kb, admin_orders_filter_kb,
 )
@@ -173,7 +173,19 @@ async def admin_prods_cat(callback: CallbackQuery) -> None:
         await callback.answer()
         return
     cats = await db.get_all_categories()
-    await callback.message.edit_text("Select category to manage products:", reply_markup=admin_categories_kb(cats))
+    await callback.message.edit_text("Select category:", reply_markup=admin_prod_cats_kb(cats))
+    await callback.answer()
+
+
+@router.callback_query(AdminCallback.filter(F.action == "prod_view_cat"))
+async def admin_prod_view_cat(callback: CallbackQuery, callback_data: AdminCallback) -> None:
+    if not callback.message:
+        await callback.answer()
+        return
+    products = await db.get_products_by_category(callback_data.id, active_only=False)
+    await callback.message.edit_text(
+        "Products:", reply_markup=admin_products_kb(products, callback_data.id)
+    )
     await callback.answer()
 
 

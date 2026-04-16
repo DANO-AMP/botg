@@ -171,7 +171,7 @@ def admin_products_kb(products: list[dict], cat_id: int) -> InlineKeyboardMarkup
             callback_data=AdminCallback(action="prod_view", id=p["id"]).pack(),
         ))
     b.row(InlineKeyboardButton(text="➕ Add Product", callback_data=AdminCallback(action="prod_add", id=cat_id).pack()))
-    b.row(InlineKeyboardButton(text="◀️ Back", callback_data=AdminCallback(action="cats").pack()))
+    b.row(InlineKeyboardButton(text="◀️ Back", callback_data=AdminCallback(action="prods_cat").pack()))
     return b.as_markup()
 
 
@@ -226,6 +226,19 @@ def prod_type_kb(cat_id: int) -> InlineKeyboardMarkup:
         InlineKeyboardButton(text="🔑 String/Key", callback_data=AdminCallback(action="prod_type_string", id=cat_id).pack()),
     )
     b.row(InlineKeyboardButton(text="❌ Cancel", callback_data=AdminCallback(action="menu").pack()))
+    return b.as_markup()
+
+
+def admin_prod_cats_kb(categories: list[dict]) -> InlineKeyboardMarkup:
+    """Category selector for the Products context — clicking opens the product list."""
+    b = InlineKeyboardBuilder()
+    for cat in categories:
+        label = cat["name"] + ("" if cat["is_active"] else " 🔴")
+        b.row(InlineKeyboardButton(
+            text=label,
+            callback_data=AdminCallback(action="prod_view_cat", id=cat["id"]).pack(),
+        ))
+    b.row(InlineKeyboardButton(text="◀️ Back", callback_data=AdminCallback(action="menu").pack()))
     return b.as_markup()
 
 
